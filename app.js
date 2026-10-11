@@ -1,10 +1,10 @@
 import { count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
-import { addCartItem, findCustomerByName, resolvePaidAmount, saleTotal as itemsTotal } from './sales.js';
+import { addCartItem, applySubsequentPayment, findCustomerByName, resolvePaidAmount, saleTotal as itemsTotal } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', savingSale: false, deletingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
 const today = () => new Date().toISOString().slice(0, 10);
@@ -145,6 +145,7 @@ function openModal(title, body, onSave, saveText = 'Guardar') {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
   $('#modalSave').textContent = saveText;
+  $('#modalForm .modal-actions .secondary-button').hidden = false;
   const modal = $('#modal');
   modal.returnValue = '';
   modal.showModal();
@@ -190,17 +191,29 @@ function openSale(sale) {
   openModal('Detalle de venta', `
     <div><strong>${esc(customerName(sale.customerId))}</strong><p class="muted">${dateLabel(sale.date)}</p></div>
     ${sale.items.map(item => `<div class="sale-item"><span>${esc(item.name)} × ${item.quantity}</span><strong>${money.format(item.price * item.quantity)}</strong></div>`).join('')}
-    <div class="total-row"><span>Total</span><strong>${money.format(total)}</strong></div>
-    <p>Pagado: <strong>${money.format(sale.paidAmount)}</strong><br>Saldo: <strong>${money.format(debt)}</strong></p>
-    ${debt ? `<label>Registrar abono<input name="payment" type="number" min="0.01" max="${debt}" step="0.01" inputmode="decimal" value="${debt}"></label>` : '<p class="status-preview status-Pagado">Pagado</p>'}
+    <div class="payment-summary" aria-label="Resumen de pago">
+      <div><span>Total de la venta</span><strong>${money.format(total)}</strong></div>
+      <div><span>Total pagado</span><strong>${money.format(sale.paidAmount)}</strong></div>
+      <div class="payment-balance"><span>Saldo pendiente</span><strong>${money.format(debt)}</strong></div>
+    </div>
+    ${debt > 0.005 ? `<div class="later-payment-actions">
+      <button id="showPartialPayment" type="button" class="secondary-button later-payment-button">Pago parcial</button>
+      <button id="payFullBalance" type="button" class="primary-action later-payment-button">Pago completo</button>
+    </div>
+    <div id="laterPartialFields" class="later-partial-fields" hidden>
+      <label>Monto que está pagando<input id="laterPaymentAmount" type="number" min="0.01" max="${debt}" step="0.01" inputmode="decimal" placeholder="0.00"></label>
+      <button id="confirmPartialPayment" type="button" class="primary-action later-payment-button">Confirmar pago parcial</button>
+    </div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
     <button id="deleteSale" type="button" class="secondary-button">Eliminar venta</button>
-  `, async data => {
-    if (!debt) return;
-    const payment = Number(data.get('payment'));
-    if (!(payment > 0) || payment > debt) throw new Error('El abono no es válido.');
-    await put('sales', { ...sale, paidAmount: sale.paidAmount + payment, updatedAt: new Date().toISOString() });
-    await refresh('Abono registrado.');
-  }, debt ? 'Registrar abono' : 'Cerrar');
+  `, async () => {}, 'Cerrar');
+  $('#modalForm .modal-actions .secondary-button').hidden = true;
+  $('#showPartialPayment')?.addEventListener('click', () => {
+    $('#laterPartialFields').hidden = false;
+    $('#laterPaymentAmount').value = '';
+    $('#laterPaymentAmount').focus();
+  });
+  $('#confirmPartialPayment')?.addEventListener('click', () => recordLaterPayment(sale.id, $('#laterPaymentAmount').value, 'Pago parcial registrado.'));
+  $('#payFullBalance')?.addEventListener('click', () => recordLaterPayment(sale.id, debt, 'Pago completo registrado.'));
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
     if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
@@ -209,6 +222,28 @@ function openSale(sale) {
       finally { state.deletingSales.delete(sale.id); }
     }
   });
+}
+
+async function recordLaterPayment(saleId, amount, message) {
+  if (state.payingSales.has(saleId)) return;
+  const currentSale = state.sales.find(item => item.id === saleId);
+  if (!currentSale) return toast('No se encontró la venta.');
+  let result;
+  try { result = applySubsequentPayment(saleTotal(currentSale), currentSale.paidAmount, amount); }
+  catch (error) { return toast(error.message); }
+  state.payingSales.add(saleId);
+  document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
+  try {
+    await put('sales', { ...currentSale, paidAmount: result.paidAmount, updatedAt: new Date().toISOString() });
+    $('#modal').close();
+    await refresh(message);
+    const updatedSale = state.sales.find(item => item.id === saleId);
+    if (updatedSale) openSale(updatedSale);
+  } catch (error) { toast(error.message); }
+  finally {
+    state.payingSales.delete(saleId);
+    document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = false; });
+  }
 }
 
 function openCollectionMessage(customer) {

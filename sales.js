@@ -10,6 +10,20 @@ export function resolvePaidAmount(mode, total, partialAmount = 0) {
   return amount;
 }
 
+const roundMoney = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+export function applySubsequentPayment(total, alreadyPaid, paymentAmount) {
+  const saleAmount = roundMoney(total);
+  const paidBefore = Math.max(0, roundMoney(alreadyPaid));
+  const remainingBefore = Math.max(0, roundMoney(saleAmount - paidBefore));
+  const payment = roundMoney(paymentAmount);
+  if (!(payment > 0) || payment > remainingBefore) {
+    throw new Error('El pago debe ser mayor que $0 y no superar el saldo pendiente.');
+  }
+  const paidAmount = roundMoney(paidBefore + payment);
+  return { paidAmount, remaining: Math.max(0, roundMoney(saleAmount - paidAmount)) };
+}
+
 export function addCartItem(cart, product, quantity) {
   const next = cart.map(item => ({ ...item }));
   const existing = next.find(item => item.productId === product.id && item.price === product.price);
