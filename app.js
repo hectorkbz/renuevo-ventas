@@ -1,7 +1,7 @@
 import { consolidateCustomerSales, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
-import { addCartItem, allocateNewPaymentToUnits, applySubsequentPayment, capPaidUnitAllocations, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, normalizeText, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
+import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
 const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
@@ -107,8 +107,7 @@ function renderSaleForm() {
 function renderCustomerSuggestions() {
   const input = $('#saleCustomerName');
   const query = normalizeText(input.value);
-  const general = state.customers.find(customer => normalizeText(customer.name) === 'venta general');
-  const matches = state.customers.filter(customer => customer.id !== general?.id && (!query || normalizeText(customer.name).includes(query))).slice(0, 6);
+  const matches = findCustomerMatches(state.customers, query, 3);
   const suggestions = $('#customerSuggestions');
   suggestions.innerHTML = matches.map(customer => `<button type="button" class="customer-suggestion" role="option" data-select-customer="${customer.id}"><strong>${esc(customer.name)}</strong><span>${esc(customer.phone || 'Sin teléfono')}</span></button>`).join('');
   suggestions.hidden = !input.matches(':focus') || !matches.length;
@@ -174,6 +173,7 @@ function openModal(title, body, onSave, saveText = 'Guardar') {
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
   $('#modalSave').textContent = saveText;
+  $('#modalSave').disabled = false;
   $('#modalForm .modal-actions .secondary-button').hidden = false;
   const modal = $('#modal');
   modal.returnValue = '';
@@ -218,13 +218,11 @@ function openProduct(product = {}) {
 
 function saleItemPaymentRow(item, index) {
   const paidQuantity = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
-  const pendingQuantity = item.quantity - paidQuantity;
-  const payOptions = Array.from({ length: pendingQuantity }, (_, option) => `<option value="${option + 1}">${option + 1}</option>`).join('');
-  const correctionOptions = Array.from({ length: item.quantity + 1 }, (_, option) => `<option value="${option}" ${option === paidQuantity ? 'selected' : ''}>${option}</option>`).join('');
+  const stateLabel = paidQuantity === item.quantity ? 'Pagado' : paidQuantity === 0 ? 'Pendiente' : `${paidQuantity} de ${item.quantity} pagadas`;
+  const stateClass = paidQuantity === item.quantity ? 'paid' : paidQuantity ? 'partial' : 'pending';
   return `<div class="sale-product-payment">
-    <div class="product-payment-top"><span class="item-main"><strong>${esc(item.name)}</strong><span>${item.quantity} × ${money.format(item.price)}</span></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><span class="compact-payment-state ${paidQuantity === item.quantity ? 'paid' : paidQuantity ? 'partial' : ''}">${paidQuantity} pag. · ${pendingQuantity} pend.</span></span></div>
-    ${pendingQuantity ? `<div class="product-payment-controls"><select data-pay-units="${index}" aria-label="Unidades a pagar">${payOptions}</select><button type="button" class="primary-action later-payment-button" data-pay-item="${index}">Registrar pago de unidades</button></div>` : ''}
-    <div class="product-payment-controls correction-controls"><select data-correct-units="${index}" aria-label="Corregir unidades pagadas">${correctionOptions}</select><button type="button" class="secondary-button later-payment-button" data-correct-item="${index}">Corregir unidades</button></div>
+    <div class="product-payment-top"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><strong>${money.format(item.price * item.quantity)}</strong></div>
+    <div class="product-payment-bottom"><span class="compact-payment-state ${stateClass}">${stateLabel}</span><button type="button" class="change-payment-button" data-change-item="${index}">Cambiar</button></div>
   </div>`;
 }
 
@@ -234,21 +232,14 @@ function openSale(sale) {
   const corrections = sale.paymentCorrections || [];
   const payments = sale.payments || [];
   openModal('Detalle de venta', `
-    <div><strong>${esc(customerName(sale.customerId))}</strong><p class="muted">${dateLabel(sale.date)}</p></div>
-    ${sale.items.map(saleItemPaymentRow).join('')}
-    <div class="payment-summary" aria-label="Resumen de pago">
-      <div><span>Total de la venta</span><strong>${money.format(total)}</strong></div>
-      <div><span>Total pagado</span><strong>${money.format(sale.paidAmount)}</strong></div>
-      <div class="payment-balance"><span>Saldo pendiente</span><strong>${money.format(debt)}</strong></div>
+    <div class="sale-detail-heading"><strong>${esc(customerName(sale.customerId))}</strong><span>${dateLabel(sale.date)}</span></div>
+    <div class="sale-products-list">${sale.items.map(saleItemPaymentRow).join('')}</div>
+    <div class="sale-payment-totals" aria-label="Resumen de pago">
+      <div><span>Total vendido</span><strong>${money.format(total)}</strong></div>
+      <div><span>Cobrado</span><strong>${money.format(sale.paidAmount)}</strong></div>
+      <div class="payment-balance"><span>Pendiente</span><strong>${money.format(debt)}</strong></div>
     </div>
-    ${debt > 0.005 ? `<div class="payment-action-label">Registrar nuevo pago</div><div class="later-payment-actions">
-      <button id="showPartialPayment" type="button" class="secondary-button later-payment-button">Pago parcial</button>
-      <button id="payFullBalance" type="button" class="primary-action later-payment-button">Pago completo</button>
-    </div>
-    <div id="laterPartialFields" class="later-partial-fields" hidden>
-      <label>Monto que está pagando<input id="laterPaymentAmount" type="number" min="0.01" max="${debt}" step="0.01" inputmode="decimal" placeholder="0.00"></label>
-      <button id="confirmPartialPayment" type="button" class="primary-action later-payment-button">Confirmar pago parcial</button>
-    </div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
+    ${debt > 0.005 ? `<div class="sale-collection-actions"><button id="collectFullBalance" type="button" class="primary-action later-payment-button">Cobrar todo lo pendiente</button><button id="openPartialPayment" type="button" class="secondary-button later-payment-button">Registrar abono parcial</button></div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
     <button id="showPaymentCorrection" type="button" class="discreet-button correction-toggle">Corregir pago existente</button>
     <div id="paymentCorrectionFields" class="later-partial-fields" hidden>
       <p class="correction-note">Importe recibido actual: <strong>${money.format(sale.paidAmount)}</strong></p>
@@ -257,31 +248,20 @@ function openSale(sale) {
     </div>
     ${payments.length ? `<details class="payment-history"><summary>Pagos registrados (${payments.length})</summary>${payments.map(payment => `<div><span>${dateTimeLabel(payment.at)}</span><strong>${money.format(payment.amount)}</strong></div>`).join('')}</details>` : ''}
     ${corrections.length ? `<details class="payment-history"><summary>Correcciones (${corrections.length})</summary>${corrections.slice().reverse().map(correction => `<div><span>${dateTimeLabel(correction.at)}</span><strong>${money.format(correction.previousAmount)} → ${money.format(correction.newAmount)}</strong></div>`).join('')}</details>` : ''}
-    <button id="deleteSale" type="button" class="secondary-button">Eliminar venta</button>
+    <div class="danger-zone"><button id="deleteSale" type="button" class="delete-sale-button">Eliminar venta</button></div>
   `, async () => {}, 'Cerrar');
   $('#modalForm .modal-actions .secondary-button').hidden = true;
-  $('#showPartialPayment')?.addEventListener('click', () => {
-    $('#laterPartialFields').hidden = false;
-    $('#laterPaymentAmount').value = '';
-    $('#laterPaymentAmount').focus();
+  $('#collectFullBalance')?.addEventListener('click', () => {
+    if (!confirm(`¿Registrar el cobro exacto de ${money.format(debt)}?`)) return;
+    recordLaterPayment(sale.id, debt, 'Pago completo registrado.', 'full');
   });
-  $('#confirmPartialPayment')?.addEventListener('click', () => recordLaterPayment(sale.id, $('#laterPaymentAmount').value, 'Pago parcial registrado.'));
-  $('#payFullBalance')?.addEventListener('click', () => recordLaterPayment(sale.id, debt, 'Pago completo registrado.'));
+  $('#openPartialPayment')?.addEventListener('click', () => { $('#modal').close(); openPartialPaymentEditor(sale.id); });
   $('#showPaymentCorrection').addEventListener('click', () => {
     $('#paymentCorrectionFields').hidden = false;
     $('#correctedPaidAmount').focus();
   });
   $('#confirmPaymentCorrection').addEventListener('click', () => correctSalePayment(sale.id, $('#correctedPaidAmount').value));
-  $('#modalBody').querySelectorAll('[data-pay-item]').forEach(button => button.addEventListener('click', () => {
-    const index = Number(button.dataset.payItem);
-    const units = Number($(`[data-pay-units="${index}"]`).value);
-    const currentPaid = Number(sale.items[index].paidQuantity) || 0;
-    updateItemPayment(sale.id, index, currentPaid + units, false);
-  }));
-  $('#modalBody').querySelectorAll('[data-correct-item]').forEach(button => button.addEventListener('click', () => {
-    const index = Number(button.dataset.correctItem);
-    updateItemPayment(sale.id, index, Number($(`[data-correct-units="${index}"]`).value), true);
-  }));
+  $('#modalBody').querySelectorAll('[data-change-item]').forEach(button => button.addEventListener('click', () => { $('#modal').close(); openItemPaymentEditor(sale.id, Number(button.dataset.changeItem)); }));
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
     if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
@@ -292,41 +272,115 @@ function openSale(sale) {
   });
 }
 
-async function updateItemPayment(saleId, itemIndex, paidQuantity, isCorrection) {
+function reopenSaleAfterCancel(saleId) {
+  const modal = $('#modal');
+  modal.addEventListener('close', () => {
+    if (modal.returnValue !== 'cancel') return;
+    setTimeout(() => {
+      const sale = state.sales.find(item => item.id === saleId);
+      if (sale) openSale(sale);
+    }, 0);
+  }, { once: true });
+}
+
+function openItemPaymentEditor(saleId, itemIndex) {
+  const sale = state.sales.find(item => item.id === saleId);
+  const item = sale?.items[itemIndex];
+  if (!sale || !item) return toast('No se encontró el producto.');
+  const current = Number(item.paidQuantity) || 0;
+  const options = Array.from({ length: item.quantity + 1 }, (_, quantity) => `<option value="${quantity}" ${quantity === current ? 'selected' : ''}>${quantity}</option>`).join('');
+  openModal('Cambiar unidades pagadas', `
+    <div class="editor-product"><strong>${esc(item.name)}</strong><span>${item.quantity} unidad(es) · ${money.format(item.price)} c/u</span></div>
+    <p class="muted">Actualmente: <strong>${current} pagada(s)</strong></p>
+    <label>Unidades que deben quedar pagadas<select id="finalPaidQuantity" name="paidQuantity">${options}</select></label>
+    <div id="itemChangePreview" class="change-preview"></div>
+  `, async data => updateItemPayment(saleId, itemIndex, Number(data.get('paidQuantity'))), 'Confirmar');
+  reopenSaleAfterCancel(saleId);
+  const renderPreview = () => {
+    const target = Number($('#finalPaidQuantity').value);
+    const delta = roundMoney((target - current) * item.price);
+    const nextPaid = roundMoney(sale.paidAmount + delta);
+    const nextDebt = roundMoney(saleTotal(sale) - nextPaid);
+    const preview = $('#itemChangePreview');
+    if (target === current) {
+      preview.innerHTML = '<span>Selecciona una cantidad diferente.</span>';
+      $('#modalSave').disabled = true;
+      return;
+    }
+    try {
+      changeItemPaidQuantity(sale, itemIndex, target, new Date().toISOString(), true);
+      preview.classList.remove('conflict');
+      $('#modalSave').disabled = false;
+      preview.innerHTML = `<span>Cobrado: <strong>${money.format(nextPaid)}</strong></span><span>Pendiente: <strong>${money.format(nextDebt)}</strong></span><small>${delta > 0 ? `Se sumarán ${money.format(delta)}.` : `Se descontarán ${money.format(Math.abs(delta))}.`}</small>`;
+    } catch (error) {
+      preview.classList.add('conflict');
+      preview.textContent = error.message;
+      $('#modalSave').disabled = true;
+    }
+  };
+  $('#finalPaidQuantity').addEventListener('change', renderPreview);
+  renderPreview();
+}
+
+function openPartialPaymentEditor(saleId) {
+  const sale = state.sales.find(item => item.id === saleId);
+  if (!sale) return toast('No se encontró la venta.');
+  const debt = roundMoney(saleTotal(sale) - sale.paidAmount);
+  if (debt <= 0) return toast('Esta venta ya está pagada.');
+  openModal('Registrar abono parcial', `
+    <p class="muted">Saldo pendiente actual: <strong>${money.format(debt)}</strong></p>
+    <label>Importe recibido<input id="partialPaymentAmount" name="amount" type="number" min="0.01" max="${debt}" step="0.01" inputmode="decimal" placeholder="0.00" required></label>
+    <div id="partialPaymentPreview" class="change-preview"><span>Escribe el importe recibido.</span></div>
+  `, async data => recordLaterPayment(saleId, data.get('amount'), 'Abono parcial registrado.', 'partial'), 'Confirmar abono');
+  reopenSaleAfterCancel(saleId);
+  $('#modalSave').disabled = true;
+  $('#partialPaymentAmount').addEventListener('input', () => {
+    const amount = Number($('#partialPaymentAmount').value);
+    const preview = $('#partialPaymentPreview');
+    if (!(amount > 0) || amount > debt) {
+      $('#modalSave').disabled = true;
+      preview.classList.toggle('conflict', amount > debt);
+      preview.textContent = amount > debt ? 'El abono supera el saldo pendiente.' : 'Escribe el importe recibido.';
+      return;
+    }
+    preview.classList.remove('conflict');
+    $('#modalSave').disabled = false;
+    preview.innerHTML = `<span>Cobrado: <strong>${money.format(sale.paidAmount + amount)}</strong></span><span>Pendiente: <strong>${money.format(debt - amount)}</strong></span>`;
+  });
+  $('#partialPaymentAmount').focus();
+}
+
+async function updateItemPayment(saleId, itemIndex, paidQuantity) {
   if (state.payingSales.has(saleId)) return;
   const currentSale = state.sales.find(item => item.id === saleId);
   if (!currentSale) return toast('No se encontró la venta.');
   let updated;
-  try { updated = changeItemPaidQuantity(currentSale, itemIndex, paidQuantity, new Date().toISOString(), isCorrection); }
+  try { updated = changeItemPaidQuantity(currentSale, itemIndex, paidQuantity, new Date().toISOString(), true); }
   catch (error) { return toast(error.message); }
-  const oldAmount = Number(currentSale.paidAmount || 0);
-  if (isCorrection && !confirm(`¿Corregir las unidades pagadas?\n\nImporte anterior: ${money.format(oldAmount)}\nImporte nuevo: ${money.format(updated.paidAmount)}`)) return;
   state.payingSales.add(saleId);
   document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
   try {
     await put('sales', updated);
-    $('#modal').close();
-    await refresh(isCorrection ? 'Pago por producto corregido.' : 'Pago por producto registrado.');
+    if ($('#modal').open) $('#modal').close();
+    await refresh('Unidades pagadas actualizadas.');
     const refreshed = state.sales.find(item => item.id === saleId);
     if (refreshed) openSale(refreshed);
   } catch (error) { toast(error.message); }
   finally { state.payingSales.delete(saleId); }
 }
 
-async function recordLaterPayment(saleId, amount, message) {
+async function recordLaterPayment(saleId, amount, message, kind = 'amount') {
   if (state.payingSales.has(saleId)) return;
   const currentSale = state.sales.find(item => item.id === saleId);
   if (!currentSale) return toast('No se encontró la venta.');
-  let result;
-  try { result = applySubsequentPayment(saleTotal(currentSale), currentSale.paidAmount, amount); }
+  let updated;
+  try { updated = addMonetaryPayment(currentSale, amount, new Date().toISOString(), kind); }
   catch (error) { return toast(error.message); }
   state.payingSales.add(saleId);
   document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
   try {
-    const at = new Date().toISOString();
-    const payment = roundMoney(result.paidAmount - Number(currentSale.paidAmount || 0));
-    await put('sales', { ...currentSale, items: allocateNewPaymentToUnits(currentSale.items, payment), paidAmount: result.paidAmount, payments: [...(currentSale.payments || []), { amount: payment, at, kind: 'amount' }], updatedAt: at });
-    $('#modal').close();
+    await put('sales', updated);
+    if ($('#modal').open) $('#modal').close();
     await refresh(message);
     const updatedSale = state.sales.find(item => item.id === saleId);
     if (updatedSale) openSale(updatedSale);
@@ -352,10 +406,9 @@ async function correctSalePayment(saleId, amount) {
   try {
     const at = new Date().toISOString();
     const correction = { at, previousAmount, newAmount: result.paidAmount };
-    const correctedItems = result.paidAmount > previousAmount
-      ? allocateNewPaymentToUnits(currentSale.items, result.paidAmount - previousAmount)
-      : capPaidUnitAllocations(currentSale.items, result.paidAmount);
-    await put('sales', { ...currentSale, items: correctedItems, paidAmount: result.paidAmount, paymentCorrections: [...(currentSale.paymentCorrections || []), correction], updatedAt: at });
+    const unitAmount = paidByUnits(currentSale.items);
+    if (result.paidAmount < unitAmount) throw new Error(`Primero reduce las unidades pagadas. Esas unidades representan ${money.format(unitAmount)}.`);
+    await put('sales', { ...currentSale, paidAmount: result.paidAmount, monetaryPaidAmount: roundMoney(result.paidAmount - unitAmount), paymentCorrections: [...(currentSale.paymentCorrections || []), correction], updatedAt: at });
     $('#modal').close();
     await refresh('Pago corregido.');
     const updatedSale = state.sales.find(item => item.id === saleId);
@@ -473,7 +526,7 @@ function bindEvents() {
   $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('.sale-basics').style.marginBottom = ''; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
   $('#saleDate').addEventListener('change', () => { $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value); });
   $('#salePaid').addEventListener('input', () => {
-    state.cart = allocateNewPaymentToUnits(state.cart.map(item => ({ ...item, paidQuantity: 0 })), Number($('#salePaid').value) || 0);
+    state.cart = state.cart.map(item => ({ ...item, paidQuantity: 0 }));
     renderSaleForm();
   });
   document.querySelectorAll('[data-payment]').forEach(button => button.addEventListener('click', () => {

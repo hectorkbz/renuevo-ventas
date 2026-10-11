@@ -15,8 +15,9 @@ for (const asset of ['./index.html', './styles.css', './app.js', './billing.js',
 
 const database = await readFile(new URL('db.js', root), 'utf8');
 for (const store of ['products', 'customers', 'sales', 'settings']) assert.ok(database.includes(`'${store}'`));
-assert.ok(database.includes('DB_VERSION = 4'), 'la migración de ventas debe ejecutarse automáticamente');
+assert.ok(database.includes('DB_VERSION = 5'), 'la migración de pagos independientes debe ejecutarse automáticamente');
 assert.ok(database.includes('migrateSaleRecord'), 'la migración debe conservar y ampliar ventas existentes');
+assert.ok(database.includes('monetaryPaidAmount') || (await readFile(new URL('sales.js', root), 'utf8')).includes('monetaryPaidAmount'), 'los abonos monetarios deben persistir separados de las unidades');
 assert.ok(database.includes('reconcileProductCatalog'), 'la restauración debe reconciliar el catálogo');
 assert.ok(database.includes("transaction('sales', 'readwrite')"), 'las ventas deben guardarse directamente');
 assert.ok(!database.includes("transaction(['sales', 'products']"), 'guardar una venta no debe modificar productos');

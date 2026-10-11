@@ -2,7 +2,7 @@ import { PRODUCT_CATALOG, reconcileProductCatalog } from './catalog.js';
 import { isSameCustomerDate, mergeDailySales, migrateSaleRecord } from './sales.js';
 
 const DB_NAME = 'renuevo-ventas';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORES = ['products', 'customers', 'sales', 'settings'];
 
 export function openDatabase() {
@@ -26,7 +26,7 @@ export function openDatabase() {
           for (const product of reconciled) products.put(product);
         };
       }
-      if (event.oldVersion < 4) {
+      if (event.oldVersion < 5) {
         const sales = request.transaction.objectStore('sales');
         sales.getAll().onsuccess = salesEvent => {
           for (const sale of salesEvent.target.result) sales.put(migrateSaleRecord(sale));
@@ -139,5 +139,5 @@ export async function replaceAll(data) {
 
 export async function exportAll() {
   const [products, customers, sales, settings] = await Promise.all(STORES.map(getAll));
-  return { version: 4, exportedAt: new Date().toISOString(), products, customers, sales, settings };
+  return { version: 5, exportedAt: new Date().toISOString(), products, customers, sales, settings };
 }

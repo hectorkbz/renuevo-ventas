@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { addCartItem, allocateNewPaymentToUnits, appendPurchaseToSale, applySubsequentPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, isSameCustomerDate, mergeDailySales, migrateSaleRecord, normalizeText, resolvePaidAmount, saleTotal, summarizeSales } from '../sales.js';
+import { addCartItem, addMonetaryPayment, appendPurchaseToSale, applySubsequentPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, isSameCustomerDate, mergeDailySales, migrateSaleRecord, normalizeText, resolvePaidAmount, saleTotal, summarizeSales } from '../sales.js';
 
 const coffee = { id: 1, name: 'Café', price: 3 };
 const bread = { id: 2, name: 'Pan', price: 2.5 };
@@ -47,11 +47,17 @@ assert.equal(accumulated.purchaseMovements.length, 2, 'debe conservar los moment
 let daniela = migrateSaleRecord({ id: 20, customerId: 7, date: '2026-10-11', paidAmount: 0, items: [{ name: 'A', price: 2, quantity: 1 }, { name: 'B', price: 2, quantity: 1 }, { name: 'C', price: 2, quantity: 1 }] });
 daniela = changeItemPaidQuantity(daniela, 0, 1, '2026-10-11T12:10:00Z');
 assert.deepEqual(summarizeSales([daniela]), { total: 6, paid: 2, pending: 4 }, 'pagar un producto de $2 debe dejar $4');
-const secondPayment = applySubsequentPayment(6, daniela.paidAmount, 3);
-daniela.items = allocateNewPaymentToUnits(daniela.items, 3);
-daniela.paidAmount = secondPayment.paidAmount;
+daniela = addMonetaryPayment(daniela, 3, '2026-10-11T12:20:00Z');
 assert.deepEqual(summarizeSales([daniela]), { total: 6, paid: 5, pending: 1 }, 'un abono posterior de $3 debe dejar $1');
-assert.deepEqual(daniela.items.map(item => item.paidQuantity), [1, 1, 0], 'el dólar restante debe permanecer como abono sin marcar otro producto completo');
+assert.deepEqual(daniela.items.map(item => item.paidQuantity), [1, 0, 0], 'el abono monetario no debe marcar automáticamente productos completos');
+assert.equal(daniela.monetaryPaidAmount, 3);
+const danielaPaid = addMonetaryPayment(daniela, 1, '2026-10-11T12:30:00Z', 'full');
+assert.deepEqual(summarizeSales([danielaPaid]), { total: 6, paid: 6, pending: 0 }, 'cobrar el saldo restante debe pagar la venta');
+assert.throws(() => addMonetaryPayment(danielaPaid, 1), 'no debe permitir cobrar dos veces una venta pagada');
+assert.throws(() => changeItemPaidQuantity(daniela, 1, 1, '2026-10-11T12:25:00Z', true), /abonos existentes/, 'debe explicar el conflicto entre unidades y abonos');
+const danielaCorrected = changeItemPaidQuantity(daniela, 0, 0, '2026-10-11T12:26:00Z', true);
+assert.equal(danielaCorrected.monetaryPaidAmount, 3, 'corregir unidades no debe eliminar el abono monetario');
+assert.deepEqual(summarizeSales([danielaCorrected]), { total: 6, paid: 3, pending: 3 });
 
 const paidSeven = migrateSaleRecord({ id: 30, customerId: 7, date: '2026-10-11', paidAmount: 7, items: [{ name: 'Producto', price: 7, quantity: 1 }] });
 const correctedSeven = changeItemPaidQuantity(paidSeven, 0, 0, '2026-10-11T14:00:00Z', true);
@@ -62,6 +68,13 @@ const correctedUp = changeItemPaidQuantity(correctedSeven, 0, 1, '2026-10-11T14:
 assert.equal(correctedUp.paidAmount, 7, 'la corrección también debe permitir aumentar unidades pagadas');
 assert.equal(correctedUp.paymentCorrections.length, 2);
 assert.equal(correctedUp.payments.length, paidSeven.payments.length, 'aumentar mediante corrección no debe crear un pago duplicado');
+let maltas = migrateSaleRecord({ id: 31, customerId: 7, date: '2026-10-11', paidAmount: 3, items: [{ name: 'Malta', price: 1, quantity: 3 }] });
+maltas = changeItemPaidQuantity(maltas, 0, 1, '2026-10-11T15:00:00Z', true);
+assert.deepEqual(summarizeSales([maltas]), { total: 3, paid: 1, pending: 2 });
+maltas = changeItemPaidQuantity(maltas, 0, 0, '2026-10-11T15:01:00Z', true);
+assert.deepEqual(summarizeSales([maltas]), { total: 3, paid: 0, pending: 3 });
+maltas = changeItemPaidQuantity(maltas, 0, 3, '2026-10-11T15:02:00Z', true);
+assert.deepEqual(summarizeSales([maltas]), { total: 3, paid: 3, pending: 0 }, 'la cantidad final debe poder volver de 0 a 3 sin sumar unidades');
 
 const grouped = mergeDailySales([
   { id: 1, customerId: 7, date: '2026-10-11', paidAmount: 2, items: [{ name: 'A', price: 2, quantity: 1 }] },
@@ -78,4 +91,8 @@ assert.equal(findCustomerByName(customers, '  maría PÉREZ ').id, 2, 'debe evit
 assert.equal(findCustomerByName(customers, 'maria   perez').id, 2, 'debe ignorar tildes y espacios adicionales');
 assert.equal(normalizeText('  María   PÉREZ '), 'maria perez');
 assert.equal(findCustomerByName(customers, 'Cliente nuevo'), null);
+const fiftyCustomers = Array.from({ length: 50 }, (_, index) => ({ id: index + 10, name: `Cliente ${index + 1}` }));
+fiftyCustomers.push({ id: 100, name: 'Daniela Pérez', phone: '04120000000' }, { id: 101, name: 'Ana Daniela' }, { id: 102, name: 'Danilo' }, { id: 103, name: 'Jordan' });
+assert.deepEqual(findCustomerMatches(fiftyCustomers, ''), [], 'enfocar el campo vacío no debe mostrar la lista completa');
+assert.deepEqual(findCustomerMatches(fiftyCustomers, 'dán').map(customer => customer.name), ['Daniela Pérez', 'Danilo', 'Ana Daniela'], 'debe devolver como máximo tres coincidencias relevantes');
 console.log('Pruebas de venta rápida completadas correctamente.');

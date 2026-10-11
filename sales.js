@@ -20,6 +20,10 @@ export function resolvePaidAmount(mode, total, partialAmount = 0) {
 
 export const roundMoney = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+export function paidByUnits(items) {
+  return roundMoney(items.reduce((sum, item) => sum + (Number(item.paidQuantity) || 0) * item.price, 0));
+}
+
 export function summarizeSales(sales) {
   return sales.reduce((summary, sale) => {
     const total = roundMoney(saleTotal(sale.items));
@@ -72,10 +76,13 @@ export function allocatePaidUnits(items, paidAmount) {
 export function migrateSaleRecord(sale) {
   const createdAt = sale.createdAt || new Date(`${sale.date}T12:00:00`).toISOString();
   const items = allocatePaidUnits(sale.items || [], sale.paidAmount || 0);
+  const unitAmount = paidByUnits(items);
+  const monetaryPaidAmount = 'monetaryPaidAmount' in sale ? roundMoney(sale.monetaryPaidAmount) : Math.max(0, roundMoney((sale.paidAmount || 0) - unitAmount));
   return {
     ...sale,
     items,
     paidAmount: roundMoney(sale.paidAmount || 0),
+    monetaryPaidAmount,
     payments: sale.payments || ((sale.paidAmount || 0) > 0 ? [{ amount: roundMoney(sale.paidAmount), at: createdAt, kind: 'legacy' }] : []),
     paymentCorrections: sale.paymentCorrections || [],
     purchaseMovements: sale.purchaseMovements || [{ at: createdAt, items: (sale.items || []).map(item => ({ ...item })) }],
@@ -87,10 +94,12 @@ export function appendPurchaseToSale(sale, purchase) {
   const current = migrateSaleRecord(sale);
   const addedItems = allocatePaidUnits(purchase.items, purchase.paidAmount);
   const paidAmount = roundMoney(current.paidAmount + purchase.paidAmount);
+  const purchaseMonetary = Math.max(0, roundMoney(purchase.paidAmount - paidByUnits(addedItems)));
   return {
     ...current,
     items: [...current.items, ...addedItems],
     paidAmount,
+    monetaryPaidAmount: roundMoney(current.monetaryPaidAmount + purchaseMonetary),
     payments: [...current.payments, ...(purchase.paidAmount > 0 ? [{ amount: roundMoney(purchase.paidAmount), at: purchase.createdAt, kind: 'purchase' }] : [])],
     purchaseMovements: [...current.purchaseMovements, { at: purchase.createdAt, items: purchase.items.map(item => ({ ...item })) }],
     updatedAt: purchase.createdAt
@@ -105,6 +114,7 @@ export function mergeDailySales(sales, purchase) {
       ...target,
       items: [...target.items, ...source.items],
       paidAmount: roundMoney(target.paidAmount + source.paidAmount),
+      monetaryPaidAmount: roundMoney(target.monetaryPaidAmount + source.monetaryPaidAmount),
       payments: [...target.payments, ...source.payments],
       paymentCorrections: [...target.paymentCorrections, ...source.paymentCorrections],
       purchaseMovements: [...target.purchaseMovements, ...source.purchaseMovements],
@@ -121,10 +131,10 @@ export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = ne
   if (!item || !Number.isInteger(quantity) || quantity < 0 || quantity > item.quantity) throw new Error('La cantidad pagada no es válida.');
   const previousQuantity = item.paidQuantity || 0;
   if (quantity === previousQuantity) throw new Error('La cantidad pagada no cambió.');
-  const difference = roundMoney((quantity - previousQuantity) * item.price);
-  const nextPaid = roundMoney(current.paidAmount + difference);
-  if (nextPaid < 0 || nextPaid > roundMoney(saleTotal(current.items))) throw new Error('El cambio no coincide con el saldo de la venta.');
   const items = current.items.map((value, index) => index === itemIndex ? { ...value, paidQuantity: quantity } : value);
+  const difference = roundMoney((quantity - previousQuantity) * item.price);
+  const nextPaid = roundMoney(paidByUnits(items) + current.monetaryPaidAmount);
+  if (nextPaid > roundMoney(saleTotal(current.items))) throw new Error('Los abonos existentes no dejan saldo suficiente para marcar esas unidades. Corrige primero el importe abonado.');
   const event = { at, previousAmount: current.paidAmount, newAmount: nextPaid, itemIndex, previousQuantity, newQuantity: quantity };
   return {
     ...current,
@@ -132,6 +142,19 @@ export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = ne
     paidAmount: nextPaid,
     payments: difference > 0 && !correction ? [...current.payments, { amount: difference, at, kind: 'product', itemIndex, quantity: quantity - previousQuantity }] : current.payments,
     paymentCorrections: correction || difference < 0 ? [...current.paymentCorrections, event] : current.paymentCorrections,
+    updatedAt: at
+  };
+}
+
+export function addMonetaryPayment(sale, amount, at = new Date().toISOString(), kind = 'amount') {
+  const current = migrateSaleRecord(sale);
+  const result = applySubsequentPayment(saleTotal(current.items), current.paidAmount, amount);
+  const payment = roundMoney(result.paidAmount - current.paidAmount);
+  return {
+    ...current,
+    paidAmount: result.paidAmount,
+    monetaryPaidAmount: roundMoney(current.monetaryPaidAmount + payment),
+    payments: [...current.payments, { amount: payment, at, kind }],
     updatedAt: at
   };
 }
@@ -168,4 +191,19 @@ export function addCartItem(cart, product, quantity) {
 export function findCustomerByName(customers, name) {
   const normalized = normalizeText(name);
   return customers.find(customer => normalizeText(customer.name) === normalized) || null;
+}
+
+export function findCustomerMatches(customers, value, limit = 3) {
+  const query = normalizeText(value);
+  if (!query) return [];
+  const relevance = name => {
+    const normalized = normalizeText(name);
+    if (normalized.startsWith(query)) return 0;
+    if (normalized.split(' ').some(word => word.startsWith(query))) return 1;
+    return 2;
+  };
+  return customers
+    .filter(customer => normalizeText(customer.name) !== 'venta general' && normalizeText(customer.name).includes(query))
+    .sort((a, b) => relevance(a.name) - relevance(b.name) || a.name.localeCompare(b.name, 'es'))
+    .slice(0, limit);
 }

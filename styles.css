@@ -70,15 +70,28 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .payment-history summary { color:var(--green-dark); font-weight:800; cursor:pointer; }
 .payment-history div { display:flex; justify-content:space-between; gap:10px; padding-top:9px; color:var(--muted); font-size:13px; }
 .payment-history strong { color:var(--ink); text-align:right; }
-.sale-product-payment { display:grid; gap:5px; padding:7px 0; border-bottom:1px solid var(--line); }
+.sale-products-list { display:grid; }
+.sale-product-payment { display:grid; gap:5px; padding:8px 0; border-bottom:1px solid var(--line); }
 .sale-product-payment:last-child { border-bottom:0; }
 .product-payment-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.compact-payment-state { display:block; margin-top:2px; color:var(--danger); font-size:11px; font-weight:750; }
+.product-payment-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.compact-payment-state { display:block; color:var(--danger); font-size:12px; font-weight:800; }
 .compact-payment-state.paid { color:var(--green); }
 .compact-payment-state.partial { color:var(--amber); }
-.product-payment-controls { display:grid; grid-template-columns:58px 1fr; gap:6px; }
-.product-payment-controls select,.product-payment-controls button { min-height:38px; padding:6px 9px; border-radius:11px; font-size:12px; }
-.correction-controls { opacity:.92; }
+.change-payment-button { min-height:36px; padding:6px 14px; border:1px solid #b9cec5; border-radius:11px; color:var(--green); background:var(--white); font-size:13px; font-weight:800; }
+.sale-detail-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.sale-detail-heading span { color:var(--muted); font-size:13px; }
+.sale-payment-totals { display:grid; gap:6px; padding:11px 12px; background:var(--mint); border-radius:14px; }
+.sale-payment-totals div { display:flex; justify-content:space-between; gap:12px; }
+.sale-payment-totals .payment-balance strong { color:var(--danger); }
+.sale-collection-actions { display:grid; gap:7px; }
+.editor-product { display:grid; gap:3px; padding:10px 12px; background:var(--mint); border-radius:14px; }
+.editor-product span { color:var(--muted); font-size:13px; }
+.change-preview { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:10px 12px; color:var(--green-dark); background:var(--mint); border-radius:14px; font-size:13px; }
+.change-preview small { grid-column:1/-1; color:var(--muted); }
+.change-preview.conflict { display:block; color:var(--danger); background:#fdeaea; font-weight:750; }
+.danger-zone { margin-top:5px; padding-top:10px; border-top:1px solid var(--line); }
+.delete-sale-button { width:100%; min-height:40px; border:1px solid #e4c4c4; border-radius:12px; color:var(--danger); background:#fffafa; font-weight:750; }
 .customer-payment-summary { margin-bottom:4px; }
 button:disabled { cursor:default; opacity:.55; }
 .compact-empty { padding:10px; }
