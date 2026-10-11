@@ -55,6 +55,14 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .payment-summary .payment-balance strong { color:var(--danger); }
 .later-payment-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
 .later-partial-fields { display:grid; gap:10px; padding:12px; background:var(--mint); border-radius:16px; }
+.payment-action-label { color:var(--green-dark); font-size:13px; font-weight:850; }
+.correction-toggle { justify-self:start; color:var(--amber); }
+.correction-note { margin-bottom:0; color:var(--muted); font-size:14px; }
+.payment-history { padding:10px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.payment-history summary { color:var(--green-dark); font-weight:800; cursor:pointer; }
+.payment-history div { display:flex; justify-content:space-between; gap:10px; padding-top:9px; color:var(--muted); font-size:13px; }
+.payment-history strong { color:var(--ink); text-align:right; }
+.customer-payment-summary { margin-bottom:4px; }
 button:disabled { cursor:default; opacity:.55; }
 .compact-empty { padding:10px; }
 .status-preview,.status-pill { width:max-content; padding:7px 10px; border-radius:999px; font-size:12px; font-weight:800; }

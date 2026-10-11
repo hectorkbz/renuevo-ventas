@@ -10,7 +10,18 @@ export function resolvePaidAmount(mode, total, partialAmount = 0) {
   return amount;
 }
 
-const roundMoney = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+export const roundMoney = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+
+export function summarizeSales(sales) {
+  return sales.reduce((summary, sale) => {
+    const total = roundMoney(saleTotal(sale.items));
+    const paid = Math.min(total, Math.max(0, roundMoney(sale.paidAmount || 0)));
+    summary.total = roundMoney(summary.total + total);
+    summary.paid = roundMoney(summary.paid + paid);
+    summary.pending = roundMoney(summary.pending + Math.max(0, total - paid));
+    return summary;
+  }, { total: 0, paid: 0, pending: 0 });
+}
 
 export function applySubsequentPayment(total, alreadyPaid, paymentAmount) {
   const saleAmount = roundMoney(total);
@@ -21,6 +32,16 @@ export function applySubsequentPayment(total, alreadyPaid, paymentAmount) {
     throw new Error('El pago debe ser mayor que $0 y no superar el saldo pendiente.');
   }
   const paidAmount = roundMoney(paidBefore + payment);
+  return { paidAmount, remaining: Math.max(0, roundMoney(saleAmount - paidAmount)) };
+}
+
+export function correctPaidAmount(total, newAmount) {
+  const saleAmount = roundMoney(total);
+  if (String(newAmount).trim() === '') throw new Error('Escribe el nuevo total recibido.');
+  const paidAmount = roundMoney(newAmount);
+  if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > saleAmount) {
+    throw new Error('El total recibido debe estar entre $0 y el total de la venta.');
+  }
   return { paidAmount, remaining: Math.max(0, roundMoney(saleAmount - paidAmount)) };
 }
 

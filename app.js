@@ -1,12 +1,13 @@
 import { count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
-import { addCartItem, applySubsequentPayment, findCustomerByName, resolvePaidAmount, saleTotal as itemsTotal } from './sales.js';
+import { addCartItem, applySubsequentPayment, correctPaidAmount, findCustomerByName, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
 const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
+const dateTimeLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
 const today = () => new Date().toISOString().slice(0, 10);
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
 
@@ -67,9 +68,7 @@ function navigate(view) {
 function renderSummary() {
   const selected = $('#summaryDate').value;
   const sales = state.sales.filter(sale => sale.date === selected);
-  const total = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const paid = sales.reduce((sum, sale) => sum + sale.paidAmount, 0);
-  const debt = total - paid;
+  const { total, paid, pending: debt } = summarizeSales(sales);
   $('#homeTitle').textContent = selected === today() ? 'Hoy' : dateLabel(selected);
   $('#summaryCards').innerHTML = [
     ['Vendido', money.format(total)], ['Cobrado', money.format(paid)], ['Por cobrar', money.format(debt)], ['Operaciones', sales.length]
@@ -122,7 +121,7 @@ function renderHistory() {
 }
 
 function customerDebt(customerId) {
-  return state.sales.filter(sale => sale.customerId === customerId).reduce((sum, sale) => sum + Math.max(0, saleTotal(sale) - sale.paidAmount), 0);
+  return summarizeSales(state.sales.filter(sale => sale.customerId === customerId)).pending;
 }
 
 function renderCustomers() {
@@ -188,6 +187,8 @@ function openProduct(product = {}) {
 function openSale(sale) {
   const total = saleTotal(sale);
   const debt = Math.max(0, total - sale.paidAmount);
+  const corrections = sale.paymentCorrections || [];
+  const payments = sale.payments || [];
   openModal('Detalle de venta', `
     <div><strong>${esc(customerName(sale.customerId))}</strong><p class="muted">${dateLabel(sale.date)}</p></div>
     ${sale.items.map(item => `<div class="sale-item"><span>${esc(item.name)} × ${item.quantity}</span><strong>${money.format(item.price * item.quantity)}</strong></div>`).join('')}
@@ -196,7 +197,7 @@ function openSale(sale) {
       <div><span>Total pagado</span><strong>${money.format(sale.paidAmount)}</strong></div>
       <div class="payment-balance"><span>Saldo pendiente</span><strong>${money.format(debt)}</strong></div>
     </div>
-    ${debt > 0.005 ? `<div class="later-payment-actions">
+    ${debt > 0.005 ? `<div class="payment-action-label">Registrar nuevo pago</div><div class="later-payment-actions">
       <button id="showPartialPayment" type="button" class="secondary-button later-payment-button">Pago parcial</button>
       <button id="payFullBalance" type="button" class="primary-action later-payment-button">Pago completo</button>
     </div>
@@ -204,6 +205,14 @@ function openSale(sale) {
       <label>Monto que está pagando<input id="laterPaymentAmount" type="number" min="0.01" max="${debt}" step="0.01" inputmode="decimal" placeholder="0.00"></label>
       <button id="confirmPartialPayment" type="button" class="primary-action later-payment-button">Confirmar pago parcial</button>
     </div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
+    <button id="showPaymentCorrection" type="button" class="discreet-button correction-toggle">Corregir pago existente</button>
+    <div id="paymentCorrectionFields" class="later-partial-fields" hidden>
+      <p class="correction-note">Importe recibido actual: <strong>${money.format(sale.paidAmount)}</strong></p>
+      <label>Nuevo total recibido acumulado<input id="correctedPaidAmount" type="number" min="0" max="${total}" step="0.01" inputmode="decimal" value="${sale.paidAmount}"></label>
+      <button id="confirmPaymentCorrection" type="button" class="secondary-button later-payment-button">Revisar y corregir</button>
+    </div>
+    ${payments.length ? `<details class="payment-history"><summary>Pagos registrados (${payments.length})</summary>${payments.map(payment => `<div><span>${dateTimeLabel(payment.at)}</span><strong>${money.format(payment.amount)}</strong></div>`).join('')}</details>` : ''}
+    ${corrections.length ? `<details class="payment-history"><summary>Correcciones (${corrections.length})</summary>${corrections.slice().reverse().map(correction => `<div><span>${dateTimeLabel(correction.at)}</span><strong>${money.format(correction.previousAmount)} → ${money.format(correction.newAmount)}</strong></div>`).join('')}</details>` : ''}
     <button id="deleteSale" type="button" class="secondary-button">Eliminar venta</button>
   `, async () => {}, 'Cerrar');
   $('#modalForm .modal-actions .secondary-button').hidden = true;
@@ -214,6 +223,11 @@ function openSale(sale) {
   });
   $('#confirmPartialPayment')?.addEventListener('click', () => recordLaterPayment(sale.id, $('#laterPaymentAmount').value, 'Pago parcial registrado.'));
   $('#payFullBalance')?.addEventListener('click', () => recordLaterPayment(sale.id, debt, 'Pago completo registrado.'));
+  $('#showPaymentCorrection').addEventListener('click', () => {
+    $('#paymentCorrectionFields').hidden = false;
+    $('#correctedPaidAmount').focus();
+  });
+  $('#confirmPaymentCorrection').addEventListener('click', () => correctSalePayment(sale.id, $('#correctedPaidAmount').value));
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
     if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
@@ -234,9 +248,38 @@ async function recordLaterPayment(saleId, amount, message) {
   state.payingSales.add(saleId);
   document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
   try {
-    await put('sales', { ...currentSale, paidAmount: result.paidAmount, updatedAt: new Date().toISOString() });
+    const at = new Date().toISOString();
+    const payment = roundMoney(result.paidAmount - Number(currentSale.paidAmount || 0));
+    await put('sales', { ...currentSale, paidAmount: result.paidAmount, payments: [...(currentSale.payments || []), { amount: payment, at }], updatedAt: at });
     $('#modal').close();
     await refresh(message);
+    const updatedSale = state.sales.find(item => item.id === saleId);
+    if (updatedSale) openSale(updatedSale);
+  } catch (error) { toast(error.message); }
+  finally {
+    state.payingSales.delete(saleId);
+    document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = false; });
+  }
+}
+
+async function correctSalePayment(saleId, amount) {
+  if (state.payingSales.has(saleId)) return;
+  const currentSale = state.sales.find(item => item.id === saleId);
+  if (!currentSale) return toast('No se encontró la venta.');
+  let result;
+  try { result = correctPaidAmount(saleTotal(currentSale), amount); }
+  catch (error) { return toast(error.message); }
+  const previousAmount = Number(currentSale.paidAmount || 0);
+  if (result.paidAmount === previousAmount) return toast('El importe nuevo es igual al actual.');
+  if (!confirm(`¿Corregir el total recibido?\n\nImporte anterior: ${money.format(previousAmount)}\nImporte nuevo: ${money.format(result.paidAmount)}`)) return;
+  state.payingSales.add(saleId);
+  document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
+  try {
+    const at = new Date().toISOString();
+    const correction = { at, previousAmount, newAmount: result.paidAmount };
+    await put('sales', { ...currentSale, paidAmount: result.paidAmount, paymentCorrections: [...(currentSale.paymentCorrections || []), correction], updatedAt: at });
+    $('#modal').close();
+    await refresh('Pago corregido.');
     const updatedSale = state.sales.find(item => item.id === saleId);
     if (updatedSale) openSale(updatedSale);
   } catch (error) { toast(error.message); }
@@ -284,8 +327,9 @@ function openMessageSettings() {
 
 function openCustomerHistory(customer) {
   const sales = state.sales.filter(sale => sale.customerId === customer.id);
-  const debt = customerDebt(customer.id);
-  openModal(customer.name, `<div class="summary-card"><span>Deuda total</span><strong>${money.format(debt)}</strong></div>${debt > 0.005 ? '<button id="collectWhatsApp" type="button" class="whatsapp-button">Cobrar por WhatsApp</button>' : ''}<div>${sales.map(saleRow).join('') || '<p class="empty">Sin compras.</p>'}</div>`, async () => openCustomer(customer), 'Editar cliente');
+  const summary = summarizeSales(sales);
+  const debt = summary.pending;
+  openModal(customer.name, `<div class="payment-summary customer-payment-summary"><div><span>Comprado</span><strong>${money.format(summary.total)}</strong></div><div><span>Cobrado</span><strong>${money.format(summary.paid)}</strong></div><div class="payment-balance"><span>Pendiente</span><strong>${money.format(summary.pending)}</strong></div></div>${debt > 0.005 ? '<button id="collectWhatsApp" type="button" class="whatsapp-button">Cobrar por WhatsApp</button>' : ''}<p class="muted">Toca una venta para registrar o corregir su pago.</p><div>${sales.map(saleRow).join('') || '<p class="empty">Sin compras.</p>'}</div>`, async () => openCustomer(customer), 'Editar cliente');
   $('#collectWhatsApp')?.addEventListener('click', () => { $('#modal').close(); openCollectionMessage(customer); });
   $('#modalBody').querySelectorAll('.sale-open').forEach(button => button.addEventListener('click', () => { $('#modal').close(); openSale(state.sales.find(sale => sale.id === Number(button.dataset.saleId))); }));
 }
@@ -357,7 +401,8 @@ function bindEvents() {
     if (saveButton) saveButton.disabled = true;
     try {
       const customerId = await resolveSaleCustomer();
-      await saveSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt: new Date().toISOString() });
+      const createdAt = new Date().toISOString();
+      await saveSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, payments: paidAmount > 0 ? [{ amount: paidAmount, at: createdAt }] : [], paymentCorrections: [], createdAt });
       state.cart = [];
       state.paymentMode = 'paid';
       $('#salePaid').value = '';
