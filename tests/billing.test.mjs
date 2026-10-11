@@ -23,6 +23,12 @@ assert.match(message, /Abonado: \$5\.00 USD/);
 assert.match(message, /Total pendiente: \$14\.00 USD \(tasa BCV\)/);
 assert.doesNotMatch(message, /bolívares|Bs\./i, 'no debe inventar una conversión a bolívares');
 
+const unitOnlySummary = summarizePendingSales(7, [
+  { customerId: 7, paidAmount: 5, monetaryPaidAmount: 0, items: [{ name: 'Malta', price: 5, quantity: 2, paidQuantity: 1 }] }
+]);
+assert.equal(unitOnlySummary.monetaryPaid, 0);
+assert.doesNotMatch(buildCollectionMessage({ name: 'Daniela' }, unitOnlySummary), /Abonado:/, 'el pago por unidades no se presenta como abono monetario');
+
 const datedSales = [
   { id: 20, customerId: 7, date: '2026-10-04', paidAmount: 5, items: [{ name: 'Malta', price: 5, quantity: 2, paidQuantity: 1 }] },
   { id: 21, customerId: 7, date: '2026-10-11', paidAmount: 0, items: [{ name: 'Tequeños', price: 7, quantity: 1, paidQuantity: 0 }] },

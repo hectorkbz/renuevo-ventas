@@ -38,14 +38,15 @@ export function summarizePendingSales(customerId, sales) {
   }
   const original = pendingSales.reduce((sum, sale) => sum + totalOf(sale), 0);
   const paid = pendingSales.reduce((sum, sale) => sum + Math.min(sale.paidAmount, totalOf(sale)), 0);
-  return { sales: pendingSales, items: [...grouped.values()], original, paid, pending: Math.max(0, original - paid) };
+  const monetaryPaid = pendingSales.reduce((sum, sale) => sum + Math.min(Number(sale.paidAmount) || 0, monetaryPaymentsOf(sale)), 0);
+  return { sales: pendingSales, items: [...grouped.values()], original, paid, monetaryPaid, pending: Math.max(0, original - paid) };
 }
 
 export function buildCollectionMessage(customer, summary, customSettings = {}) {
   const settings = { ...DEFAULT_MESSAGE_SETTINGS, ...customSettings };
   const productLines = summary.items.map(item => `• ${item.quantity} × ${item.name} (${usdWithCurrency(item.price)} c/u): ${usdWithCurrency(item.quantity * item.price)}`).join('\n');
-  const totals = summary.paid > 0
-    ? `💵 Total original: ${usdWithCurrency(summary.original)}\n✅ Abonado: ${usdWithCurrency(summary.paid)}\n💰 Total pendiente: ${usdWithCurrency(summary.pending)} (tasa BCV)`
+  const totals = summary.monetaryPaid > 0
+    ? `💵 Total original: ${usdWithCurrency(summary.original)}\n✅ Abonado: ${usdWithCurrency(summary.monetaryPaid)}\n💰 Total pendiente: ${usdWithCurrency(summary.pending)} (tasa BCV)`
     : `💰 Total pendiente: ${usdWithCurrency(summary.pending)} (tasa BCV)`;
   return `${settings.greeting.replaceAll('{nombre}', customer.name)}\n\n${settings.introduction}\n\nTe compartimos el detalle de tus compras pendientes:\n\n🧾 Detalle de compra:\n${productLines}\n\n${totals}\n\nPuedes realizar tu pago mediante Pago Móvil a los siguientes datos:\n\n${settings.bankDetails}\n\n${settings.paymentInstructions}\n\n${settings.farewell}`;
 }
