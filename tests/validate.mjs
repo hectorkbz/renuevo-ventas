@@ -9,12 +9,14 @@ assert.ok(manifest.icons.some(icon => icon.sizes === '192x192'));
 assert.ok(manifest.icons.some(icon => icon.sizes === '512x512'));
 
 const serviceWorker = await readFile(new URL('sw.js', root), 'utf8');
-for (const asset of ['./index.html', './styles.css', './app.js', './billing.js', './sales.js', './db.js', './manifest.webmanifest']) {
+for (const asset of ['./index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './db.js', './manifest.webmanifest']) {
   assert.ok(serviceWorker.includes(asset), `${asset} debe estar en la caché offline`);
 }
 
 const database = await readFile(new URL('db.js', root), 'utf8');
 for (const store of ['products', 'customers', 'sales', 'settings']) assert.ok(database.includes(`'${store}'`));
+assert.ok(database.includes('DB_VERSION = 3'), 'la migración del catálogo debe ejecutarse automáticamente');
+assert.ok(database.includes('reconcileProductCatalog'), 'la restauración debe reconciliar el catálogo');
 assert.ok(database.includes("transaction('sales', 'readwrite')"), 'las ventas deben guardarse directamente');
 assert.ok(!database.includes("transaction(['sales', 'products']"), 'guardar una venta no debe modificar productos');
 

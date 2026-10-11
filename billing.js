@@ -15,7 +15,7 @@ export function summarizePendingSales(customerId, sales) {
   const grouped = new Map();
   for (const sale of pendingSales) {
     for (const item of sale.items) {
-      const key = `${item.productId ?? item.name}|${item.price}`;
+      const key = `${item.productId ?? ''}|${item.name}|${item.price}`;
       const current = grouped.get(key) || { name: item.name, price: item.price, quantity: 0 };
       current.quantity += item.quantity;
       grouped.set(key, current);

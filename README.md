@@ -36,6 +36,7 @@ Cada instalación del navegador conserva su propia copia. Conviene descargar res
 node tests/validate.mjs
 node tests/billing.test.mjs
 node tests/sales.test.mjs
+node tests/catalog.test.mjs
 node --check app.js
 node --check db.js
 node --check sw.js

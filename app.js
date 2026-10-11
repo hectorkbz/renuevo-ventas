@@ -1,5 +1,6 @@
 import { count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
+import { PRODUCT_CATALOG } from './catalog.js';
 import { addCartItem, findCustomerByName, resolvePaidAmount, saleTotal as itemsTotal } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
@@ -43,18 +44,14 @@ async function loadState() {
   state.customers = customers;
   state.sales = sales;
   state.settings = settings.find(item => item.id === 'whatsapp') || { ...DEFAULT_MESSAGE_SETTINGS };
-  state.products.sort((a, b) => a.name.localeCompare(b.name));
+  state.products.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
   state.customers.sort((a, b) => a.name.localeCompare(b.name));
   state.sales.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
 }
 
 async function seedDefaults() {
   if (await count('products') === 0) {
-    await Promise.all([
-      put('products', { name: 'Desayuno', price: 60 }),
-      put('products', { name: 'Café', price: 25 }),
-      put('products', { name: 'Agua', price: 15 })
-    ]);
+    await Promise.all(PRODUCT_CATALOG.map(product => put('products', product)));
   }
   if (await count('customers') === 0) await put('customers', { name: 'Venta general', phone: '' });
   if (await count('settings') === 0) await put('settings', DEFAULT_MESSAGE_SETTINGS);

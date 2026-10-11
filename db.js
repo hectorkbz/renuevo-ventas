@@ -1,5 +1,7 @@
+import { PRODUCT_CATALOG, reconcileProductCatalog } from './catalog.js';
+
 const DB_NAME = 'renuevo-ventas';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORES = ['products', 'customers', 'sales', 'settings'];
 
 export function openDatabase() {
@@ -15,13 +17,12 @@ export function openDatabase() {
         sales.createIndex('date', 'date');
         sales.createIndex('customerId', 'customerId');
       }
-      if (event.oldVersion > 0 && event.oldVersion < 2) {
+      if (event.oldVersion < 3) {
         const products = request.transaction.objectStore('products');
-        products.openCursor().onsuccess = cursorEvent => {
-          const cursor = cursorEvent.target.result;
-          if (!cursor) return;
-          if (typeof cursor.value.active !== 'boolean') cursor.update({ ...cursor.value, active: true });
-          cursor.continue();
+        products.getAll().onsuccess = productsEvent => {
+          const reconciled = reconcileProductCatalog(productsEvent.target.result);
+          products.clear();
+          for (const product of reconciled) products.put(product);
         };
       }
     };
@@ -74,7 +75,8 @@ export async function replaceAll(data) {
     for (const storeName of STORES) {
       const store = tx.objectStore(storeName);
       store.clear();
-      for (const value of data[storeName] || []) store.put(value);
+      const values = storeName === 'products' ? reconcileProductCatalog(data.products) : (data[storeName] || []);
+      for (const value of values) store.put(value);
     }
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
@@ -83,5 +85,5 @@ export async function replaceAll(data) {
 
 export async function exportAll() {
   const [products, customers, sales, settings] = await Promise.all(STORES.map(getAll));
-  return { version: 2, exportedAt: new Date().toISOString(), products, customers, sales, settings };
+  return { version: 3, exportedAt: new Date().toISOString(), products, customers, sales, settings };
 }
