@@ -1,4 +1,4 @@
-const CACHE = 'renuevo-ventas-v7';
+const CACHE = 'renuevo-ventas-v8';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './db.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', event => {

@@ -2,6 +2,14 @@ export function saleTotal(items) {
   return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 }
 
+export function normalizeText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es');
+}
+
+export function isSameCustomerDate(sale, customerId, date) {
+  return sale.customerId === customerId && sale.date === date;
+}
+
 export function resolvePaidAmount(mode, total, partialAmount = 0) {
   if (mode === 'paid') return total;
   if (mode === 'pending') return 0;
@@ -45,6 +53,110 @@ export function correctPaidAmount(total, newAmount) {
   return { paidAmount, remaining: Math.max(0, roundMoney(saleAmount - paidAmount)) };
 }
 
+export function allocatePaidUnits(items, paidAmount) {
+  let available = Math.max(0, roundMoney(paidAmount));
+  return items.map(item => {
+    const price = roundMoney(item.price);
+    const existing = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
+    let paidQuantity = existing;
+    if (!('paidQuantity' in item)) {
+      paidQuantity = price > 0 ? Math.min(item.quantity, Math.floor((available + 0.0001) / price)) : item.quantity;
+      available = roundMoney(available - paidQuantity * price);
+    } else {
+      available = roundMoney(available - paidQuantity * price);
+    }
+    return { ...item, paidQuantity };
+  });
+}
+
+export function migrateSaleRecord(sale) {
+  const createdAt = sale.createdAt || new Date(`${sale.date}T12:00:00`).toISOString();
+  const items = allocatePaidUnits(sale.items || [], sale.paidAmount || 0);
+  return {
+    ...sale,
+    items,
+    paidAmount: roundMoney(sale.paidAmount || 0),
+    payments: sale.payments || ((sale.paidAmount || 0) > 0 ? [{ amount: roundMoney(sale.paidAmount), at: createdAt, kind: 'legacy' }] : []),
+    paymentCorrections: sale.paymentCorrections || [],
+    purchaseMovements: sale.purchaseMovements || [{ at: createdAt, items: (sale.items || []).map(item => ({ ...item })) }],
+    mergedOperations: sale.mergedOperations || []
+  };
+}
+
+export function appendPurchaseToSale(sale, purchase) {
+  const current = migrateSaleRecord(sale);
+  const addedItems = allocatePaidUnits(purchase.items, purchase.paidAmount);
+  const paidAmount = roundMoney(current.paidAmount + purchase.paidAmount);
+  return {
+    ...current,
+    items: [...current.items, ...addedItems],
+    paidAmount,
+    payments: [...current.payments, ...(purchase.paidAmount > 0 ? [{ amount: roundMoney(purchase.paidAmount), at: purchase.createdAt, kind: 'purchase' }] : [])],
+    purchaseMovements: [...current.purchaseMovements, { at: purchase.createdAt, items: purchase.items.map(item => ({ ...item })) }],
+    updatedAt: purchase.createdAt
+  };
+}
+
+export function mergeDailySales(sales, purchase) {
+  const ordered = sales.map(migrateSaleRecord).sort((a, b) => a.id - b.id);
+  let target = ordered[0];
+  for (const source of ordered.slice(1)) {
+    target = {
+      ...target,
+      items: [...target.items, ...source.items],
+      paidAmount: roundMoney(target.paidAmount + source.paidAmount),
+      payments: [...target.payments, ...source.payments],
+      paymentCorrections: [...target.paymentCorrections, ...source.paymentCorrections],
+      purchaseMovements: [...target.purchaseMovements, ...source.purchaseMovements],
+      mergedOperations: [...target.mergedOperations, ...source.mergedOperations, { ...source }]
+    };
+  }
+  return { sale: purchase ? appendPurchaseToSale(target, purchase) : target, removedIds: ordered.slice(1).map(sale => sale.id) };
+}
+
+export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = new Date().toISOString()) {
+  const current = migrateSaleRecord(sale);
+  const item = current.items[itemIndex];
+  const quantity = Number(newPaidQuantity);
+  if (!item || !Number.isInteger(quantity) || quantity < 0 || quantity > item.quantity) throw new Error('La cantidad pagada no es válida.');
+  const previousQuantity = item.paidQuantity || 0;
+  if (quantity === previousQuantity) throw new Error('La cantidad pagada no cambió.');
+  const difference = roundMoney((quantity - previousQuantity) * item.price);
+  const nextPaid = roundMoney(current.paidAmount + difference);
+  if (nextPaid < 0 || nextPaid > roundMoney(saleTotal(current.items))) throw new Error('El cambio no coincide con el saldo de la venta.');
+  const items = current.items.map((value, index) => index === itemIndex ? { ...value, paidQuantity: quantity } : value);
+  const event = { at, previousAmount: current.paidAmount, newAmount: nextPaid, itemIndex, previousQuantity, newQuantity: quantity };
+  return {
+    ...current,
+    items,
+    paidAmount: nextPaid,
+    payments: difference > 0 ? [...current.payments, { amount: difference, at, kind: 'product', itemIndex, quantity: quantity - previousQuantity }] : current.payments,
+    paymentCorrections: difference < 0 ? [...current.paymentCorrections, event] : current.paymentCorrections,
+    updatedAt: at
+  };
+}
+
+export function capPaidUnitAllocations(items, maximumAmount) {
+  let available = Math.max(0, roundMoney(maximumAmount));
+  return items.map(item => {
+    const current = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
+    const paidQuantity = item.price > 0 ? Math.min(current, Math.floor((available + 0.0001) / item.price)) : current;
+    available = roundMoney(available - paidQuantity * item.price);
+    return { ...item, paidQuantity };
+  });
+}
+
+export function allocateNewPaymentToUnits(items, paymentAmount) {
+  let available = Math.max(0, roundMoney(paymentAmount));
+  return items.map(item => {
+    const current = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
+    const pending = item.quantity - current;
+    const added = item.price > 0 ? Math.min(pending, Math.floor((available + 0.0001) / item.price)) : pending;
+    available = roundMoney(available - added * item.price);
+    return { ...item, paidQuantity: current + added };
+  });
+}
+
 export function addCartItem(cart, product, quantity) {
   const next = cart.map(item => ({ ...item }));
   const existing = next.find(item => item.productId === product.id && item.price === product.price);
@@ -54,6 +166,6 @@ export function addCartItem(cart, product, quantity) {
 }
 
 export function findCustomerByName(customers, name) {
-  const normalized = String(name || '').trim().toLocaleLowerCase('es');
-  return customers.find(customer => customer.name.trim().toLocaleLowerCase('es') === normalized) || null;
+  const normalized = normalizeText(name);
+  return customers.find(customer => normalizeText(customer.name) === normalized) || null;
 }

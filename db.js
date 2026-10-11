@@ -1,7 +1,8 @@
 import { PRODUCT_CATALOG, reconcileProductCatalog } from './catalog.js';
+import { isSameCustomerDate, mergeDailySales, migrateSaleRecord } from './sales.js';
 
 const DB_NAME = 'renuevo-ventas';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORES = ['products', 'customers', 'sales', 'settings'];
 
 export function openDatabase() {
@@ -23,6 +24,12 @@ export function openDatabase() {
           const reconciled = reconcileProductCatalog(productsEvent.target.result);
           products.clear();
           for (const product of reconciled) products.put(product);
+        };
+      }
+      if (event.oldVersion < 4) {
+        const sales = request.transaction.objectStore('sales');
+        sales.getAll().onsuccess = salesEvent => {
+          for (const sale of salesEvent.target.result) sales.put(migrateSaleRecord(sale));
         };
       }
     };
@@ -63,6 +70,53 @@ export async function saveSale(sale) {
   return requestResult(db.transaction('sales', 'readwrite').objectStore('sales').add(sale));
 }
 
+export async function saveOrAppendSale(purchase) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('sales', 'readwrite');
+    const store = tx.objectStore('sales');
+    const request = store.index('customerId').getAll(purchase.customerId);
+    let result;
+    request.onsuccess = () => {
+      const matches = request.result.filter(sale => isSameCustomerDate(sale, purchase.customerId, purchase.date));
+      if (!matches.length) {
+        const add = store.add(migrateSaleRecord(purchase));
+        add.onsuccess = () => { result = { id: add.result, accumulated: false, grouped: 0 }; };
+        return;
+      }
+      const merged = mergeDailySales(matches, purchase);
+      store.put(merged.sale);
+      for (const id of merged.removedIds) store.delete(id);
+      result = { id: merged.sale.id, accumulated: true, grouped: merged.removedIds.length };
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function consolidateCustomerSales(customerId) {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('sales', 'readwrite');
+    const store = tx.objectStore('sales');
+    const request = store.index('customerId').getAll(customerId);
+    let grouped = 0;
+    request.onsuccess = () => {
+      const byDate = new Map();
+      for (const sale of request.result) byDate.set(sale.date, [...(byDate.get(sale.date) || []), sale]);
+      for (const sales of byDate.values()) {
+        if (sales.length < 2) continue;
+        const merged = mergeDailySales(sales);
+        store.put(merged.sale);
+        for (const id of merged.removedIds) store.delete(id);
+        grouped += merged.removedIds.length;
+      }
+    };
+    tx.oncomplete = () => resolve(grouped);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function deleteSale(saleId) {
   const db = await openDatabase();
   return requestResult(db.transaction('sales', 'readwrite').objectStore('sales').delete(saleId));
@@ -75,7 +129,7 @@ export async function replaceAll(data) {
     for (const storeName of STORES) {
       const store = tx.objectStore(storeName);
       store.clear();
-      const values = storeName === 'products' ? reconcileProductCatalog(data.products) : (data[storeName] || []);
+      const values = storeName === 'products' ? reconcileProductCatalog(data.products) : storeName === 'sales' ? (data.sales || []).map(migrateSaleRecord) : (data[storeName] || []);
       for (const value of values) store.put(value);
     }
     tx.oncomplete = resolve;
@@ -85,5 +139,5 @@ export async function replaceAll(data) {
 
 export async function exportAll() {
   const [products, customers, sales, settings] = await Promise.all(STORES.map(getAll));
-  return { version: 3, exportedAt: new Date().toISOString(), products, customers, sales, settings };
+  return { version: 4, exportedAt: new Date().toISOString(), products, customers, sales, settings };
 }

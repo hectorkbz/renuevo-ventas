@@ -1,10 +1,10 @@
-import { count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveSale } from './db.js';
+import { consolidateCustomerSales, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
-import { addCartItem, applySubsequentPayment, correctPaidAmount, findCustomerByName, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
+import { addCartItem, allocateNewPaymentToUnits, applySubsequentPayment, capPaidUnitAllocations, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, normalizeText, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', savingSale: false, deletingSales: new Set(), payingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
 const dateTimeLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
@@ -87,12 +87,34 @@ function saleRow(sale) {
 
 function renderSaleForm() {
   const productValue = $('#saleProduct').value;
-  $('#customerSuggestions').innerHTML = state.customers.filter(item => item.name !== 'Venta general').map(item => `<option value="${esc(item.name)}"></option>`).join('');
   $('#saleProduct').innerHTML = state.products.map(item => `<option value="${item.id}">${esc(item.name)} — ${money.format(item.price)}</option>`).join('') || '<option value="">Agrega un producto en Configuración</option>';
   if (productValue) $('#saleProduct').value = productValue;
   if (!$('#saleQuantity').options.length) $('#saleQuantity').innerHTML = Array.from({ length: 20 }, (_, index) => `<option value="${index + 1}">${index + 1}</option>`).join('');
-  $('#saleItems').innerHTML = state.cart.map((item, index) => `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`).join('') || '<p class="empty compact-empty">Agrega uno o más productos.</p>';
+  $('#saleItems').innerHTML = state.cart.map((item, index) => {
+    const paidQuantity = Number(item.paidQuantity) || 0;
+    const options = Array.from({ length: item.quantity + 1 }, (_, quantity) => `<option value="${quantity}" ${quantity === paidQuantity ? 'selected' : ''}>${quantity}</option>`).join('');
+    return `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><label class="cart-paid-label">Pagadas<select data-cart-paid="${index}" aria-label="Unidades pagadas de ${esc(item.name)}">${options}</select></label><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`;
+  }).join('') || '<p class="empty compact-empty">Agrega uno o más productos.</p>';
   updatePaymentUI();
+}
+
+function renderCustomerSuggestions() {
+  const input = $('#saleCustomerName');
+  const query = normalizeText(input.value);
+  const general = state.customers.find(customer => normalizeText(customer.name) === 'venta general');
+  const matches = state.customers.filter(customer => customer.id !== general?.id && (!query || normalizeText(customer.name).includes(query))).slice(0, 6);
+  const suggestions = $('#customerSuggestions');
+  suggestions.innerHTML = matches.map(customer => `<button type="button" class="customer-suggestion" role="option" data-select-customer="${customer.id}"><strong>${esc(customer.name)}</strong><span>${esc(customer.phone || 'Sin teléfono')}</span></button>`).join('');
+  suggestions.hidden = !input.matches(':focus') || !matches.length;
+  input.setAttribute('aria-expanded', String(!suggestions.hidden));
+}
+
+function selectSaleCustomer(customer) {
+  state.selectedCustomerId = customer?.id || null;
+  $('#saleCustomerName').value = customer?.name === 'Venta general' ? '' : (customer?.name || '');
+  $('#selectedCustomerInfo').textContent = customer ? `${customer.name}${customer.phone ? ` · ${customer.phone}` : ' · Sin teléfono'}` : 'Cliente nuevo: se creará al guardar';
+  $('#customerSuggestions').hidden = true;
+  $('#saleCustomerName').setAttribute('aria-expanded', 'false');
 }
 
 function updatePaymentUI() {
@@ -111,11 +133,11 @@ function updatePaymentUI() {
 }
 
 function renderHistory() {
-  const query = $('#historySearch').value.trim().toLowerCase();
+  const query = normalizeText($('#historySearch').value);
   const filter = $('#historyStatus').value;
   const rows = state.sales.filter(sale => {
     const status = saleStatus(saleTotal(sale), sale.paidAmount);
-    return customerName(sale.customerId).toLowerCase().includes(query) && (!filter || status === filter);
+    return normalizeText(customerName(sale.customerId)).includes(query) && (!filter || status === filter);
   });
   $('#historyList').innerHTML = rows.map(saleRow).join('') || '<p class="empty">No se encontraron ventas.</p>';
 }
@@ -162,6 +184,8 @@ function openCustomer(customer = {}) {
   `, async data => {
     const name = String(data.get('name')).trim();
     if (!name) throw new Error('Escribe el nombre del cliente.');
+    const duplicate = findCustomerByName(state.customers.filter(item => item.id !== customer.id), name);
+    if (duplicate) throw new Error('Ya existe un cliente con ese nombre.');
     await put('customers', { ...customer, name, phone: String(data.get('phone')).trim() });
     await refresh('Cliente guardado.');
   });
@@ -184,6 +208,19 @@ function openProduct(product = {}) {
   });
 }
 
+function saleItemPaymentRow(item, index) {
+  const paidQuantity = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
+  const pendingQuantity = item.quantity - paidQuantity;
+  const payOptions = Array.from({ length: pendingQuantity }, (_, option) => `<option value="${option + 1}">${option + 1}</option>`).join('');
+  const correctionOptions = Array.from({ length: paidQuantity + 1 }, (_, option) => `<option value="${option}" ${option === paidQuantity ? 'selected' : ''}>${option}</option>`).join('');
+  return `<div class="sale-product-payment">
+    <div class="product-payment-top"><span><strong>${esc(item.name)}</strong><br><span class="muted">${item.quantity} unidad(es) · ${money.format(item.price)} c/u</span></span><strong>${money.format(item.price * item.quantity)}</strong></div>
+    <span class="status-pill ${paidQuantity === item.quantity ? 'status-Pagado' : paidQuantity ? 'status-Abono-parcial' : 'status-Pendiente'}">${paidQuantity} pagada(s) · ${pendingQuantity} pendiente(s)</span>
+    ${pendingQuantity ? `<div class="product-payment-controls"><select data-pay-units="${index}" aria-label="Unidades a pagar">${payOptions}</select><button type="button" class="primary-action later-payment-button" data-pay-item="${index}">Registrar pago de unidades</button></div>` : ''}
+    ${paidQuantity ? `<div class="product-payment-controls"><select data-correct-units="${index}" aria-label="Corregir unidades pagadas">${correctionOptions}</select><button type="button" class="secondary-button later-payment-button" data-correct-item="${index}">Corregir unidades pagadas</button></div>` : ''}
+  </div>`;
+}
+
 function openSale(sale) {
   const total = saleTotal(sale);
   const debt = Math.max(0, total - sale.paidAmount);
@@ -191,7 +228,7 @@ function openSale(sale) {
   const payments = sale.payments || [];
   openModal('Detalle de venta', `
     <div><strong>${esc(customerName(sale.customerId))}</strong><p class="muted">${dateLabel(sale.date)}</p></div>
-    ${sale.items.map(item => `<div class="sale-item"><span>${esc(item.name)} × ${item.quantity}</span><strong>${money.format(item.price * item.quantity)}</strong></div>`).join('')}
+    ${sale.items.map(saleItemPaymentRow).join('')}
     <div class="payment-summary" aria-label="Resumen de pago">
       <div><span>Total de la venta</span><strong>${money.format(total)}</strong></div>
       <div><span>Total pagado</span><strong>${money.format(sale.paidAmount)}</strong></div>
@@ -228,6 +265,16 @@ function openSale(sale) {
     $('#correctedPaidAmount').focus();
   });
   $('#confirmPaymentCorrection').addEventListener('click', () => correctSalePayment(sale.id, $('#correctedPaidAmount').value));
+  $('#modalBody').querySelectorAll('[data-pay-item]').forEach(button => button.addEventListener('click', () => {
+    const index = Number(button.dataset.payItem);
+    const units = Number($(`[data-pay-units="${index}"]`).value);
+    const currentPaid = Number(sale.items[index].paidQuantity) || 0;
+    updateItemPayment(sale.id, index, currentPaid + units, false);
+  }));
+  $('#modalBody').querySelectorAll('[data-correct-item]').forEach(button => button.addEventListener('click', () => {
+    const index = Number(button.dataset.correctItem);
+    updateItemPayment(sale.id, index, Number($(`[data-correct-units="${index}"]`).value), true);
+  }));
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
     if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
@@ -236,6 +283,27 @@ function openSale(sale) {
       finally { state.deletingSales.delete(sale.id); }
     }
   });
+}
+
+async function updateItemPayment(saleId, itemIndex, paidQuantity, isCorrection) {
+  if (state.payingSales.has(saleId)) return;
+  const currentSale = state.sales.find(item => item.id === saleId);
+  if (!currentSale) return toast('No se encontró la venta.');
+  let updated;
+  try { updated = changeItemPaidQuantity(currentSale, itemIndex, paidQuantity); }
+  catch (error) { return toast(error.message); }
+  const oldAmount = Number(currentSale.paidAmount || 0);
+  if (isCorrection && !confirm(`¿Corregir las unidades pagadas?\n\nImporte anterior: ${money.format(oldAmount)}\nImporte nuevo: ${money.format(updated.paidAmount)}`)) return;
+  state.payingSales.add(saleId);
+  document.querySelectorAll('.later-payment-button').forEach(button => { button.disabled = true; });
+  try {
+    await put('sales', updated);
+    $('#modal').close();
+    await refresh(isCorrection ? 'Pago por producto corregido.' : 'Pago por producto registrado.');
+    const refreshed = state.sales.find(item => item.id === saleId);
+    if (refreshed) openSale(refreshed);
+  } catch (error) { toast(error.message); }
+  finally { state.payingSales.delete(saleId); }
 }
 
 async function recordLaterPayment(saleId, amount, message) {
@@ -250,7 +318,7 @@ async function recordLaterPayment(saleId, amount, message) {
   try {
     const at = new Date().toISOString();
     const payment = roundMoney(result.paidAmount - Number(currentSale.paidAmount || 0));
-    await put('sales', { ...currentSale, paidAmount: result.paidAmount, payments: [...(currentSale.payments || []), { amount: payment, at }], updatedAt: at });
+    await put('sales', { ...currentSale, items: allocateNewPaymentToUnits(currentSale.items, payment), paidAmount: result.paidAmount, payments: [...(currentSale.payments || []), { amount: payment, at, kind: 'amount' }], updatedAt: at });
     $('#modal').close();
     await refresh(message);
     const updatedSale = state.sales.find(item => item.id === saleId);
@@ -277,7 +345,10 @@ async function correctSalePayment(saleId, amount) {
   try {
     const at = new Date().toISOString();
     const correction = { at, previousAmount, newAmount: result.paidAmount };
-    await put('sales', { ...currentSale, paidAmount: result.paidAmount, paymentCorrections: [...(currentSale.paymentCorrections || []), correction], updatedAt: at });
+    const correctedItems = result.paidAmount > previousAmount
+      ? allocateNewPaymentToUnits(currentSale.items, result.paidAmount - previousAmount)
+      : capPaidUnitAllocations(currentSale.items, result.paidAmount);
+    await put('sales', { ...currentSale, items: correctedItems, paidAmount: result.paidAmount, paymentCorrections: [...(currentSale.paymentCorrections || []), correction], updatedAt: at });
     $('#modal').close();
     await refresh('Pago corregido.');
     const updatedSale = state.sales.find(item => item.id === saleId);
@@ -327,10 +398,18 @@ function openMessageSettings() {
 
 function openCustomerHistory(customer) {
   const sales = state.sales.filter(sale => sale.customerId === customer.id);
+  const hasSameDayDuplicates = new Set(sales.map(sale => sale.date)).size < sales.length;
   const summary = summarizeSales(sales);
   const debt = summary.pending;
-  openModal(customer.name, `<div class="payment-summary customer-payment-summary"><div><span>Comprado</span><strong>${money.format(summary.total)}</strong></div><div><span>Cobrado</span><strong>${money.format(summary.paid)}</strong></div><div class="payment-balance"><span>Pendiente</span><strong>${money.format(summary.pending)}</strong></div></div>${debt > 0.005 ? '<button id="collectWhatsApp" type="button" class="whatsapp-button">Cobrar por WhatsApp</button>' : ''}<p class="muted">Toca una venta para registrar o corregir su pago.</p><div>${sales.map(saleRow).join('') || '<p class="empty">Sin compras.</p>'}</div>`, async () => openCustomer(customer), 'Editar cliente');
+  openModal(customer.name, `<div class="payment-summary customer-payment-summary"><div><span>Comprado</span><strong>${money.format(summary.total)}</strong></div><div><span>Cobrado</span><strong>${money.format(summary.paid)}</strong></div><div class="payment-balance"><span>Pendiente</span><strong>${money.format(summary.pending)}</strong></div></div>${debt > 0.005 ? '<button id="collectWhatsApp" type="button" class="whatsapp-button">Cobrar por WhatsApp</button>' : ''}${hasSameDayDuplicates ? '<button id="groupDailySales" type="button" class="secondary-button">Agrupar compras del mismo día</button>' : ''}<p class="muted">Toca una venta para registrar o corregir su pago.</p><div>${sales.map(saleRow).join('') || '<p class="empty">Sin compras.</p>'}</div>`, async () => openCustomer(customer), 'Editar cliente');
   $('#collectWhatsApp')?.addEventListener('click', () => { $('#modal').close(); openCollectionMessage(customer); });
+  $('#groupDailySales')?.addEventListener('click', async () => {
+    if (!confirm('¿Agrupar las compras de este cliente que comparten fecha? Se conservarán productos, pagos y movimientos originales.')) return;
+    const grouped = await consolidateCustomerSales(customer.id);
+    $('#modal').close();
+    await refresh(`${grouped} operación(es) agrupada(s).`);
+    openCustomerHistory(state.customers.find(item => item.id === customer.id));
+  });
   $('#modalBody').querySelectorAll('.sale-open').forEach(button => button.addEventListener('click', () => { $('#modal').close(); openSale(state.sales.find(sale => sale.id === Number(button.dataset.saleId))); }));
 }
 
@@ -338,10 +417,10 @@ async function refresh(message) { await loadState(); renderAll(); if (message) t
 
 function csvCell(value) { return `"${String(value ?? '').replaceAll('"', '""')}"`; }
 function exportCsv() {
-  const header = ['Fecha', 'Cliente', 'Producto', 'Cantidad', 'Precio unitario', 'Subtotal', 'Total venta', 'Pagado', 'Saldo', 'Estado'];
+  const header = ['Fecha', 'Cliente', 'Producto', 'Cantidad', 'Unidades pagadas', 'Unidades pendientes', 'Precio unitario', 'Subtotal', 'Total venta', 'Pagado', 'Saldo', 'Estado'];
   const rows = state.sales.flatMap(sale => {
     const total = saleTotal(sale);
-    return sale.items.map(item => [sale.date, customerName(sale.customerId), item.name, item.quantity, item.price, item.quantity * item.price, total, sale.paidAmount, Math.max(0, total - sale.paidAmount), saleStatus(total, sale.paidAmount)]);
+    return sale.items.map(item => [sale.date, customerName(sale.customerId), item.name, item.quantity, item.paidQuantity || 0, item.quantity - (item.paidQuantity || 0), item.price, item.quantity * item.price, total, sale.paidAmount, Math.max(0, total - sale.paidAmount), saleStatus(total, sale.paidAmount)]);
   });
   download(`renuevo-ventas-${today()}.csv`, '\ufeff' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\n'), 'text/csv;charset=utf-8');
 }
@@ -349,6 +428,8 @@ function exportCsv() {
 async function resolveSaleCustomer() {
   const typedName = $('#saleCustomerName').value.trim();
   const requestedName = typedName || 'Venta general';
+  const selected = state.customers.find(customer => customer.id === state.selectedCustomerId);
+  if (selected && normalizeText(selected.name) === normalizeText(requestedName)) return selected.id;
   const existing = findCustomerByName(state.customers, requestedName);
   if (existing) return existing.id;
   const id = await put('customers', { name: requestedName, phone: '' });
@@ -363,14 +444,26 @@ function bindEvents() {
   $('#summaryDate').addEventListener('change', renderSummary);
   $('#historySearch').addEventListener('input', renderHistory);
   $('#historyStatus').addEventListener('change', renderHistory);
-  $('#salePaid').addEventListener('input', updatePaymentUI);
+  $('#saleCustomerName').addEventListener('input', () => {
+    state.selectedCustomerId = null;
+    $('#selectedCustomerInfo').textContent = $('#saleCustomerName').value.trim() ? 'Cliente nuevo: se creará al guardar si no seleccionas una sugerencia' : 'Venta general';
+    renderCustomerSuggestions();
+  });
+  $('#saleCustomerName').addEventListener('focus', renderCustomerSuggestions);
+  $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
+  $('#salePaid').addEventListener('input', () => {
+    state.cart = allocateNewPaymentToUnits(state.cart.map(item => ({ ...item, paidQuantity: 0 })), Number($('#salePaid').value) || 0);
+    renderSaleForm();
+  });
   document.querySelectorAll('[data-payment]').forEach(button => button.addEventListener('click', () => {
     state.paymentMode = button.dataset.payment;
+    state.cart = state.cart.map(item => ({ ...item, paidQuantity: state.paymentMode === 'paid' ? item.quantity : 0 }));
     $('#salePaid').value = '';
     updatePaymentUI();
   }));
   $('#partialPaymentButton').addEventListener('click', () => {
     state.paymentMode = state.paymentMode === 'partial' ? 'paid' : 'partial';
+    state.cart = state.cart.map(item => ({ ...item, paidQuantity: state.paymentMode === 'paid' ? item.quantity : 0 }));
     $('#salePaid').value = '';
     updatePaymentUI();
     if (state.paymentMode === 'partial') $('#salePaid').focus();
@@ -383,11 +476,22 @@ function bindEvents() {
     const quantity = Number($('#saleQuantity').value);
     if (!product || !Number.isInteger(quantity) || quantity < 1) return toast('Selecciona un producto y cantidad válida.');
     state.cart = addCartItem(state.cart, product, quantity);
+    state.cart = state.cart.map(item => ({ ...item, paidQuantity: state.paymentMode === 'paid' ? item.quantity : (Number(item.paidQuantity) || 0) }));
     $('#saleQuantity').value = 1;
     renderSaleForm();
     $('#saleProduct').focus({ preventScroll: true });
   });
   $('#saleItems').addEventListener('click', event => { const button = event.target.closest('[data-cart-index]'); if (button) { state.cart.splice(Number(button.dataset.cartIndex), 1); renderSaleForm(); } });
+  $('#saleItems').addEventListener('change', event => {
+    const select = event.target.closest('[data-cart-paid]');
+    if (!select) return;
+    const index = Number(select.dataset.cartPaid);
+    state.cart[index] = { ...state.cart[index], paidQuantity: Number(select.value) };
+    const paid = roundMoney(state.cart.reduce((sum, item) => sum + (Number(item.paidQuantity) || 0) * item.price, 0));
+    state.paymentMode = paid <= 0 ? 'pending' : paid >= cartTotal() ? 'paid' : 'partial';
+    $('#salePaid').value = state.paymentMode === 'partial' ? paid : '';
+    updatePaymentUI();
+  });
   $('#saleForm').addEventListener('submit', async event => {
     event.preventDefault();
     if (state.savingSale) return;
@@ -402,21 +506,25 @@ function bindEvents() {
     try {
       const customerId = await resolveSaleCustomer();
       const createdAt = new Date().toISOString();
-      await saveSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, payments: paidAmount > 0 ? [{ amount: paidAmount, at: createdAt }] : [], paymentCorrections: [], createdAt });
+      const result = await saveOrAppendSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt });
       state.cart = [];
       state.paymentMode = 'paid';
       $('#salePaid').value = '';
       $('#saleCustomerName').value = '';
+      state.selectedCustomerId = null;
+      $('#selectedCustomerInfo').textContent = 'Venta general';
       $('#saleQuantity').value = 1;
-      await refresh('Venta guardada.');
+      await refresh(result.accumulated ? 'Compra añadida a la venta del día.' : 'Venta guardada.');
       navigate('home');
     } catch (error) { toast(error.message); }
     finally { state.savingSale = false; if (saveButton) saveButton.disabled = false; }
   });
   document.body.addEventListener('click', event => {
+    const selectCustomerButton = event.target.closest('[data-select-customer]');
     const saleButton = event.target.closest('.sale-open');
     const customerButton = event.target.closest('.customer-open');
     const productButton = event.target.closest('.product-edit');
+    if (selectCustomerButton) selectSaleCustomer(state.customers.find(customer => customer.id === Number(selectCustomerButton.dataset.selectCustomer)));
     if (saleButton && !saleButton.closest('dialog')) openSale(state.sales.find(sale => sale.id === Number(saleButton.dataset.saleId)));
     if (customerButton) openCustomerHistory(state.customers.find(item => item.id === Number(customerButton.dataset.customerId)));
     if (productButton) openProduct(state.products.find(item => item.id === Number(productButton.dataset.productId)));
@@ -432,8 +540,6 @@ function bindEvents() {
       await replaceAll(data); await seedDefaults(); await refresh('Respaldo restaurado.');
     } catch (error) { toast(error.message); } finally { event.target.value = ''; }
   });
-  const updateConnection = () => { $('#connectionBadge').textContent = navigator.onLine ? 'En línea' : 'Sin conexión'; $('#connectionBadge').classList.toggle('online', navigator.onLine); };
-  addEventListener('online', updateConnection); addEventListener('offline', updateConnection); updateConnection();
 }
 
 async function init() {

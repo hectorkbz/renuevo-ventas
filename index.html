@@ -15,11 +15,6 @@
     <title>Renuevo Ventas</title>
   </head>
   <body>
-    <header class="topbar">
-      <h1>Ventas Renuevo</h1>
-      <span id="connectionBadge" class="connection-badge">Sin conexión</span>
-    </header>
-
     <main id="app" class="app-shell">
       <section id="view-home" class="view active" aria-labelledby="homeTitle">
         <div class="section-heading">
@@ -39,7 +34,7 @@
         <form id="saleForm" class="stack sale-form" autocomplete="off">
           <div class="sale-basics">
             <label>Fecha<input id="saleDate" type="date" required /></label>
-            <label>Cliente<input id="saleCustomerName" list="customerSuggestions" maxlength="80" placeholder="Venta general" autocomplete="off" /><datalist id="customerSuggestions"></datalist></label>
+            <div class="customer-search"><label>Cliente<input id="saleCustomerName" maxlength="80" placeholder="Venta general" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="customerSuggestions" aria-expanded="false" /></label><div id="customerSuggestions" class="customer-suggestions" role="listbox" hidden></div><p id="selectedCustomerInfo" class="selected-customer-info">Venta general</p></div>
           </div>
           <div class="product-picker">
             <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<select id="saleQuantity" aria-label="Cantidad"></select></label></div>
