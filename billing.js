@@ -1,15 +1,21 @@
 export const DEFAULT_MESSAGE_SETTINGS = {
   id: 'whatsapp',
   greeting: '¡Hola, {nombre}!',
-  introduction: 'Gracias por apoyar nuestro Encuentro Renuevo. 💚',
-  bankDetails: '📱 04121541371\n🏦 Banco de Venezuela\n🪪 V-21023200',
-  paymentInstructions: 'Envíanos tu comprobante al pagar.',
-  farewell: '¡Dios te bendiga! 🙌'
+  introduction: 'Gracias por apoyar nuestro Encuentro Renuevo.',
+  bankDetails: '04121541371\nBanco de Venezuela\nV-21023200',
+  paymentInstructions: 'Envíanos tu comprobante de pago',
+  farewell: 'gracias una vez más, con tu aporte haremos de Renuevo 2026 una gran experiencia ¡Dios te bendiga!'
 };
 
 const totalOf = sale => sale.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 const usd = value => `$${Number(value).toFixed(2)}`;
-const usdWithCurrency = value => `${usd(value)} USD`;
+const plainText = value => String(value ?? '')
+  .normalize('NFC')
+  .replace(/[\uFE0E\uFE0F\u200D\uFFFD]/g, '')
+  .replace(/\p{Extended_Pictographic}/gu, '')
+  .replace(/[^\p{L}\p{M}\p{N}\s.,'’()/-]/gu, '')
+  .replace(/[\t ]+/g, ' ')
+  .trim();
 
 function monetaryPaymentsOf(sale) {
   if (Object.hasOwn(sale, 'monetaryPaidAmount')) return Math.max(0, Number(sale.monetaryPaidAmount) || 0);
@@ -19,7 +25,12 @@ function monetaryPaymentsOf(sale) {
 
 export function whatsappUrl(message, phone = '') {
   const recipient = whatsappPhone(phone);
-  const encodedMessage = encodeURIComponent(String(message));
+  const safeMessage = String(message)
+    .normalize('NFC')
+    .replace(/[\uFE0E\uFE0F\u200D\uFFFD]/g, '')
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[^\p{L}\p{M}\p{N}\s.,'’()/$!¡¿:-]/gu, '');
+  const encodedMessage = encodeURIComponent(safeMessage);
   return recipient
     ? `https://wa.me/${recipient}?text=${encodedMessage}`
     : `https://wa.me/?text=${encodedMessage}`;
@@ -43,16 +54,12 @@ export function summarizePendingSales(customerId, sales) {
 }
 
 export function buildCollectionMessage(customer, summary, customSettings = {}) {
-  const settings = { ...DEFAULT_MESSAGE_SETTINGS, ...customSettings };
-  const productLines = summary.items.map(item => `• ${item.quantity} × ${item.name} (${usdWithCurrency(item.price)} c/u): ${usdWithCurrency(item.quantity * item.price)}`).join('\n');
-  const totals = summary.monetaryPaid > 0
-    ? `💵 Total original: ${usdWithCurrency(summary.original)}\n✅ Abonado: ${usdWithCurrency(summary.monetaryPaid)}\n💰 Total pendiente: ${usdWithCurrency(summary.pending)} (tasa BCV)`
-    : `💰 Total pendiente: ${usdWithCurrency(summary.pending)} (tasa BCV)`;
-  return `${settings.greeting.replaceAll('{nombre}', customer.name)}\n\n${settings.introduction}\n\nTe compartimos el detalle de tus compras pendientes:\n\n🧾 Detalle de compra:\n${productLines}\n\n${totals}\n\nPuedes realizar tu pago mediante Pago Móvil a los siguientes datos:\n\n${settings.bankDetails}\n\n${settings.paymentInstructions}\n\n${settings.farewell}`;
+  const customerId = customer.id ?? summary.sales?.[0]?.customerId;
+  return buildDetailedCollectionMessage(customer, summarizeCollectionByDate(customerId, summary.sales || []), customSettings);
 }
 
 export function summarizeCollectionByDate(customerId, sales, saleId = null) {
-  const entries = sales
+  const saleEntries = sales
     .filter(sale => sale.customerId === customerId && (saleId === null || sale.id === saleId))
     .map(sale => {
       const total = totalOf(sale);
@@ -65,38 +72,44 @@ export function summarizeCollectionByDate(customerId, sales, saleId = null) {
     })
     .filter(entry => entry.pending > 0.005)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const byDate = new Map();
+  for (const entry of saleEntries) {
+    const dateEntry = byDate.get(entry.date) || { ...entry, saleId: null, total: 0, paid: 0, monetaryPaid: 0, unitPaid: 0, pending: 0, items: [], allItems: [] };
+    dateEntry.total += entry.total;
+    dateEntry.paid += entry.paid;
+    dateEntry.monetaryPaid += entry.monetaryPaid;
+    dateEntry.unitPaid += entry.unitPaid;
+    dateEntry.pending += entry.pending;
+    for (const item of entry.items) {
+      const existing = dateEntry.items.find(value => value.productId === item.productId && value.name === item.name);
+      if (existing) existing.pendingQuantity += item.pendingQuantity;
+      else dateEntry.items.push({ ...item });
+    }
+    byDate.set(entry.date, dateEntry);
+  }
+  const entries = [...byDate.values()].map(entry => ({
+    ...entry,
+    total: Math.round((entry.total + Number.EPSILON) * 100) / 100,
+    paid: Math.round((entry.paid + Number.EPSILON) * 100) / 100,
+    monetaryPaid: Math.round((entry.monetaryPaid + Number.EPSILON) * 100) / 100,
+    unitPaid: Math.round((entry.unitPaid + Number.EPSILON) * 100) / 100,
+    pending: Math.round((entry.pending + Number.EPSILON) * 100) / 100
+  }));
   return { entries, pending: entries.reduce((sum, entry) => sum + entry.pending, 0) };
 }
 
 export function buildDetailedCollectionMessage(customer, summary, customSettings = {}) {
   const settings = { ...DEFAULT_MESSAGE_SETTINGS, ...customSettings };
-  const previousDefaults = {
-    greeting: '¡Hola, {nombre}! 👋🏼',
-    introduction: 'Muchísimas gracias por apoyarnos en la vendimia a beneficio del Encuentro Renuevo. 🙏🏼',
-    bankDetails: '📲 04121541371\n🏦 Banco de Venezuela\n🆔 V-21023200',
-    paymentInstructions: 'Cuando realices el pago, por favor envíanos el comprobante por este medio para registrar tu abono.',
-    farewell: '¡Gracias por tu generosidad! Dios te bendiga. Un abrazo. ✨'
-  };
-  for (const [field, previous] of Object.entries(previousDefaults)) {
-    // Existing installations may have the old defaults stored in IndexedDB.
-    // Upgrade only those defaults, retaining any text the user customized.
-    if (customSettings[field] === previous) settings[field] = DEFAULT_MESSAGE_SETTINGS[field];
-  }
   const dates = summary.entries.map(entry => {
-    const label = new Intl.DateTimeFormat('es-VE', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${entry.date}T12:00:00`));
-    const products = entry.allItems.length
-      ? entry.allItems.map(item => {
-          const pendingQuantity = Math.max(0, item.quantity - (Number(item.paidQuantity) || 0));
-          const pendingLabel = pendingQuantity > 0 && pendingQuantity < item.quantity ? ` (${pendingQuantity} pendiente${pendingQuantity === 1 ? '' : 's'})` : '';
-          return `• ${item.quantity} × ${item.name}${pendingLabel}`;
-        }).join('\n')
-      : '• Saldo pendiente de la compra';
-    // Product-level payments and monetary abonos are distinct in the ledger.
-    const unitLine = entry.unitPaid > 0 ? `\nPagado por productos: ${usd(entry.unitPaid)}` : '';
-    const paidLine = entry.monetaryPaid > 0 ? `\nAbonado: ${usd(entry.monetaryPaid)}` : '';
-    return `📅 ${label}\n${products}\nTotal de venta: ${usd(entry.total)}${unitLine}${paidLine}\nSaldo pendiente de esta fecha: ${usd(entry.pending)}`;
+    const label = plainText(new Intl.DateTimeFormat('es-VE', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${entry.date}T12:00:00`)));
+    const products = entry.items.map(item => `- ${item.pendingQuantity} ${plainText(item.name)}`).join('\n');
+    // Product-unit payments and monetary abonos remain separate in the ledger.
+    const paidLine = entry.monetaryPaid > 0 ? `\nAbonado: ${usd(entry.monetaryPaid)} USD` : '';
+    return `Tu compra del ${label}:\n${products}${paidLine}`;
   }).join('\n\n');
-  return `${settings.greeting.replaceAll('{nombre}', customer.name).replaceAll('{cliente}', customer.name)}\n\n${settings.introduction}\n\n📋 Tu cuenta pendiente:\n${dates}\n\n💰 Total pendiente: ${usd(summary.pending)} BCV\n\nPago Móvil:\n${settings.bankDetails}\n\n${settings.paymentInstructions}\n${settings.farewell}`;
+  const bankDetails = String(settings.bankDetails || DEFAULT_MESSAGE_SETTINGS.bankDetails)
+    .split(/\r?\n/).map(plainText).filter(Boolean).join('\n');
+  return `¡Hola, ${plainText(customer.name)}! Gracias por apoyar nuestro Encuentro Renuevo.\n\n${dates}\n\nTOTAL PENDIENTE: ${usd(summary.pending)} BCV\n\nPago Móvil\n${bankDetails}\n\nEnvíanos tu comprobante de pago, gracias una vez más, con tu aporte haremos de Renuevo 2026 una gran experiencia ¡Dios te bendiga!`;
 }
 
 export function whatsappPhone(phone) {
