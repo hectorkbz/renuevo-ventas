@@ -35,6 +35,34 @@ export function buildCollectionMessage(customer, summary, customSettings = {}) {
   return `${settings.greeting.replaceAll('{nombre}', customer.name)}\n\n${settings.introduction}\n\nTe compartimos el detalle de tus compras pendientes:\n\n🧾 Detalle de compra:\n${productLines}\n\n${totals}\n\nPuedes realizar tu pago mediante Pago Móvil a los siguientes datos:\n\n${settings.bankDetails}\n\n${settings.paymentInstructions}\n\n${settings.farewell}`;
 }
 
+export function summarizeCollectionByDate(customerId, sales, saleId = null) {
+  const entries = sales
+    .filter(sale => sale.customerId === customerId && (saleId === null || sale.id === saleId))
+    .map(sale => {
+      const total = totalOf(sale);
+      const paid = Math.min(total, Math.max(0, Number(sale.paidAmount) || 0));
+      const pending = Math.max(0, total - paid);
+      const items = sale.items.map(item => ({ ...item, pendingQuantity: Math.max(0, item.quantity - (Number(item.paidQuantity) || 0)) })).filter(item => item.pendingQuantity > 0);
+      return { saleId: sale.id, date: sale.date, total, paid, pending, items };
+    })
+    .filter(entry => entry.pending > 0.005)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return { entries, pending: entries.reduce((sum, entry) => sum + entry.pending, 0) };
+}
+
+export function buildDetailedCollectionMessage(customer, summary, customSettings = {}) {
+  const settings = { ...DEFAULT_MESSAGE_SETTINGS, ...customSettings };
+  const dates = summary.entries.map(entry => {
+    const label = new Intl.DateTimeFormat('es-VE', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${entry.date}T12:00:00`));
+    const products = entry.items.length
+      ? entry.items.map(item => `• ${item.pendingQuantity} × ${item.name} (${usd(item.price)} c/u)`).join('\n')
+      : '• Saldo pendiente después de abonos registrados';
+    const paidLine = entry.paid > 0 ? `\n✅ Ya abonado: ${usd(entry.paid)}` : '';
+    return `📅 ${label}\n${products}${paidLine}\n💰 Saldo de esta fecha: ${usd(entry.pending)}`;
+  }).join('\n\n');
+  return `${settings.greeting.replaceAll('{nombre}', customer.name)}\n\n${settings.introduction}\n\nTe compartimos el detalle de tus compras pendientes:\n\n${dates}\n\n💰 Total acumulado por cobrar: ${usd(summary.pending)} (tasa BCV)\n\nLos abonos registrados ya están descontados de los saldos indicados.\n\nPuedes realizar tu pago mediante Pago Móvil a los siguientes datos:\n\n${settings.bankDetails}\n\n${settings.paymentInstructions}\n\n${settings.farewell}`;
+}
+
 export function whatsappPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (digits.startsWith('0') && digits.length === 11) return `58${digits.slice(1)}`;

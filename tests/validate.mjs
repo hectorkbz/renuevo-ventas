@@ -31,5 +31,9 @@ assert.ok(html.includes('id="saleCustomerPhone" type="tel" inputmode="tel"'), 'e
 assert.ok(!html.match(/id="saleCustomerPhone"[^>]*required/), 'el teléfono no debe ser obligatorio');
 for (const relativeReference of ['href="manifest.webmanifest"', 'src="app.js"', 'href="styles.css"']) assert.ok(html.includes(relativeReference));
 
+const app = await readFile(new URL('app.js', root), 'utf8');
+const paymentButtons = ['>Pago total<', '>Pago parcial<', '>Cobrar por WhatsApp<'].map(label => app.indexOf(label));
+assert.ok(paymentButtons.every(index => index >= 0) && paymentButtons[0] < paymentButtons[1] && paymentButtons[1] < paymentButtons[2], 'las tres acciones de cobro deben aparecer en el orden solicitado');
+
 for (const icon of manifest.icons) await access(new URL(icon.src, root));
 console.log('Validación PWA completada correctamente.');

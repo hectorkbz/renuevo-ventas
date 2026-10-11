@@ -24,6 +24,13 @@ assert.deepEqual(laterPayment, { paidAmount: 7, remaining: 0 }, 'el pago complet
 assert.throws(() => applySubsequentPayment(7, 3, 0));
 assert.throws(() => applySubsequentPayment(7, 3, 4.01));
 
+const halfPaidTen = migrateSaleRecord({ id: 5, customerId: 2, date: '2026-10-11', paidAmount: 5, items: [{ name: 'Compra', price: 10, quantity: 1, paidQuantity: 0 }] });
+const fullyPaidTen = addMonetaryPayment(halfPaidTen, 5, '2026-10-11T10:00:00Z', 'full');
+assert.deepEqual(summarizeSales([fullyPaidTen]), { total: 10, paid: 10, pending: 0 }, 'pago total debe cobrar solo los $5 restantes');
+assert.throws(() => addMonetaryPayment(fullyPaidTen, 1), 'una venta pagada no admite otro cobro');
+const partiallyPaidTen = addMonetaryPayment(halfPaidTen, 2, '2026-10-11T10:05:00Z', 'partial');
+assert.deepEqual(summarizeSales([partiallyPaidTen]), { total: 10, paid: 7, pending: 3 }, 'pago parcial de $2 debe dejar $3 pendientes');
+
 const sameCustomerSales = [
   { paidAmount: 5, items: [{ price: 5, quantity: 1 }] },
   { paidAmount: 0, items: [{ price: 7, quantity: 1 }] }

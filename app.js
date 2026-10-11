@@ -1,5 +1,5 @@
 import { consolidateCustomerSales, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
-import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
+import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappPhone } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
 import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
@@ -239,7 +239,7 @@ function openSale(sale) {
       <div><span>Cobrado</span><strong>${money.format(sale.paidAmount)}</strong></div>
       <div class="payment-balance"><span>Pendiente</span><strong>${money.format(debt)}</strong></div>
     </div>
-    ${debt > 0.005 ? `<div class="sale-collection-actions"><button id="collectFullBalance" type="button" class="primary-action later-payment-button">Cobrar todo lo pendiente</button><button id="openPartialPayment" type="button" class="secondary-button later-payment-button">Registrar abono parcial</button></div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
+    ${debt > 0.005 ? `<div class="sale-collection-actions"><button id="collectFullBalance" type="button" class="primary-action later-payment-button">Pago total</button><button id="openPartialPayment" type="button" class="secondary-button later-payment-button">Pago parcial</button><button id="collectSaleWhatsApp" type="button" class="whatsapp-button">Cobrar por WhatsApp</button></div>` : '<p class="status-preview status-Pagado">Pagado</p>'}
     <button id="showPaymentCorrection" type="button" class="discreet-button correction-toggle">Corregir pago existente</button>
     <div id="paymentCorrectionFields" class="later-partial-fields" hidden>
       <p class="correction-note">Importe recibido actual: <strong>${money.format(sale.paidAmount)}</strong></p>
@@ -256,6 +256,11 @@ function openSale(sale) {
     recordLaterPayment(sale.id, debt, 'Pago completo registrado.', 'full');
   });
   $('#openPartialPayment')?.addEventListener('click', () => { $('#modal').close(); openPartialPaymentEditor(sale.id); });
+  $('#collectSaleWhatsApp')?.addEventListener('click', () => {
+    const customer = state.customers.find(item => item.id === sale.customerId);
+    $('#modal').close();
+    openCollectionMessage(customer, sale.id);
+  });
   $('#showPaymentCorrection').addEventListener('click', () => {
     $('#paymentCorrectionFields').hidden = false;
     $('#correctedPaidAmount').focus();
@@ -420,20 +425,37 @@ async function correctSalePayment(saleId, amount) {
   }
 }
 
-function openCollectionMessage(customer) {
-  const summary = summarizePendingSales(customer.id, state.sales);
-  if (!summary.sales.length) return toast('Este cliente no tiene saldo pendiente.');
-  const phone = whatsappPhone(customer.phone);
+function openCollectionMessage(customer, saleId = null) {
+  if (!customer) return toast('No se encontró el cliente de esta venta.');
+  const allDebt = summarizeCollectionByDate(customer.id, state.sales);
+  const thisSale = saleId === null ? allDebt : summarizeCollectionByDate(customer.id, state.sales, saleId);
+  if (!thisSale.entries.length) return toast('Esta venta no tiene saldo pendiente.');
+  let scope = saleId === null ? 'all' : 'sale';
+  const currentSummary = () => scope === 'all' ? allDebt : thisSale;
+  const canChooseAll = saleId !== null && allDebt.entries.length > 1;
   openModal('Cobrar por WhatsApp', `
     <p class="muted">Revisa o edita el mensaje. Abrir WhatsApp no modifica la deuda.</p>
-    ${phone ? `<p><strong>Se enviará a:</strong> ${esc(customer.phone)}</p>` : '<p><strong>Sin teléfono:</strong> podrás elegir el contacto en WhatsApp.</p>'}
-    <label>Mensaje<textarea class="message-preview" name="message" required>${esc(buildCollectionMessage(customer, summary, state.settings))}</textarea></label>
+    ${canChooseAll ? `<div class="collection-scope"><button type="button" class="scope-button active" data-scope="sale">Esta venta · ${money.format(thisSale.pending)}</button><button type="button" class="scope-button" data-scope="all">Toda la deuda · ${money.format(allDebt.pending)}</button></div>` : ''}
+    ${customer.phone ? `<p><strong>Se enviará a:</strong> ${esc(customer.phone)}</p>` : '<label>Teléfono<input id="collectionPhone" name="phone" type="tel" inputmode="tel" maxlength="30" placeholder="0412 1234567"><span class="muted">Si lo dejas vacío, podrás elegir el contacto en WhatsApp.</span></label>'}
+    <label>Mensaje<textarea id="collectionMessage" class="message-preview" name="message" required>${esc(buildDetailedCollectionMessage(customer, currentSummary(), state.settings))}</textarea></label>
   `, async data => {
     const message = String(data.get('message')).trim();
     if (!message) throw new Error('El mensaje no puede estar vacío.');
+    const enteredPhone = String(data.get('phone') || '').trim();
+    if (enteredPhone && enteredPhone !== customer.phone) {
+      await put('customers', { ...customer, phone: enteredPhone });
+      customer.phone = enteredPhone;
+    }
+    const phone = whatsappPhone(enteredPhone || customer.phone);
     const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
     window.location.href = url;
   }, 'Abrir WhatsApp');
+  if (saleId !== null) reopenSaleAfterCancel(saleId);
+  $('#modalBody').querySelectorAll('[data-scope]').forEach(button => button.addEventListener('click', () => {
+    scope = button.dataset.scope;
+    $('#modalBody').querySelectorAll('[data-scope]').forEach(item => item.classList.toggle('active', item === button));
+    $('#collectionMessage').value = buildDetailedCollectionMessage(customer, currentSummary(), state.settings);
+  }));
 }
 
 function openMessageSettings() {

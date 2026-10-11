@@ -85,6 +85,9 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .sale-payment-totals div { display:flex; justify-content:space-between; gap:12px; }
 .sale-payment-totals .payment-balance strong { color:var(--danger); }
 .sale-collection-actions { display:grid; gap:7px; }
+.collection-scope { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.scope-button { min-height:46px; padding:8px; border:1px solid #b9cec5; border-radius:12px; color:var(--green-dark); background:var(--white); font-size:13px; font-weight:800; }
+.scope-button.active { border-color:var(--green); color:var(--white); background:var(--green); }
 .editor-product { display:grid; gap:3px; padding:10px 12px; background:var(--mint); border-radius:14px; }
 .editor-product span { color:var(--muted); font-size:13px; }
 .change-preview { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:10px 12px; color:var(--green-dark); background:var(--mint); border-radius:14px; font-size:13px; }
