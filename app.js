@@ -1,8 +1,9 @@
-import { count, deleteSaleAndRestoreInventory, exportAll, getAll, put, remove, replaceAll, saveSaleWithInventory } from './db.js';
+import { count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveSale } from './db.js';
 import { buildCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizePendingSales, whatsappPhone } from './billing.js';
+import { addCartItem, findCustomerByName, resolvePaidAmount, saleTotal as itemsTotal } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], savingSale: false, deletingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', savingSale: false, deletingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
 const today = () => new Date().toISOString().slice(0, 10);
@@ -16,8 +17,8 @@ function saleStatus(total, paid) {
 
 function statusClass(status) { return `status-${status.replaceAll(' ', '-')}`; }
 function customerName(id) { return state.customers.find(item => item.id === id)?.name || 'Cliente eliminado'; }
-function saleTotal(sale) { return sale.items.reduce((sum, item) => sum + item.price * item.quantity, 0); }
-function cartTotal() { return state.cart.reduce((sum, item) => sum + item.price * item.quantity, 0); }
+function saleTotal(sale) { return itemsTotal(sale.items); }
+function cartTotal() { return itemsTotal(state.cart); }
 
 function toast(message) {
   const element = $('#toast');
@@ -50,9 +51,9 @@ async function loadState() {
 async function seedDefaults() {
   if (await count('products') === 0) {
     await Promise.all([
-      put('products', { name: 'Desayuno', price: 60, stock: 30, active: true }),
-      put('products', { name: 'Café', price: 25, stock: 40, active: true }),
-      put('products', { name: 'Agua', price: 15, stock: 40, active: true })
+      put('products', { name: 'Desayuno', price: 60 }),
+      put('products', { name: 'Café', price: 25 }),
+      put('products', { name: 'Agua', price: 15 })
     ]);
   }
   if (await count('customers') === 0) await put('customers', { name: 'Venta general', phone: '' });
@@ -89,19 +90,28 @@ function saleRow(sale) {
 }
 
 function renderSaleForm() {
-  const customerValue = $('#saleCustomer').value;
   const productValue = $('#saleProduct').value;
-  $('#saleCustomer').innerHTML = state.customers.map(item => `<option value="${item.id}">${esc(item.name)}</option>`).join('');
-  $('#saleProduct').innerHTML = state.products.filter(item => item.active !== false && item.stock > 0).map(item => `<option value="${item.id}">${esc(item.name)} — ${money.format(item.price)} (${item.stock})</option>`).join('') || '<option value="">Sin productos disponibles</option>';
-  if (customerValue) $('#saleCustomer').value = customerValue;
+  $('#customerSuggestions').innerHTML = state.customers.filter(item => item.name !== 'Venta general').map(item => `<option value="${esc(item.name)}"></option>`).join('');
+  $('#saleProduct').innerHTML = state.products.map(item => `<option value="${item.id}">${esc(item.name)} — ${money.format(item.price)}</option>`).join('') || '<option value="">Agrega un producto en Configuración</option>';
   if (productValue) $('#saleProduct').value = productValue;
-  $('#saleItems').innerHTML = state.cart.map((item, index) => `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`).join('') || '<p class="empty">Agrega uno o más productos.</p>';
+  if (!$('#saleQuantity').options.length) $('#saleQuantity').innerHTML = Array.from({ length: 20 }, (_, index) => `<option value="${index + 1}">${index + 1}</option>`).join('');
+  $('#saleItems').innerHTML = state.cart.map((item, index) => `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`).join('') || '<p class="empty compact-empty">Agrega uno o más productos.</p>';
+  updatePaymentUI();
+}
+
+function updatePaymentUI() {
   const total = cartTotal();
-  const paid = Math.max(0, Number($('#salePaid').value) || 0);
-  const status = saleStatus(total, paid);
   $('#saleTotal').textContent = money.format(total);
-  $('#paymentStatus').className = `status-preview ${statusClass(status)}`;
-  $('#paymentStatus').textContent = `${status} · Resta ${money.format(Math.max(0, total - paid))}`;
+  $('#saveSaleButton').textContent = total ? `Guardar venta · ${money.format(total)}` : 'Guardar venta';
+  document.querySelectorAll('[data-payment]').forEach(button => button.classList.toggle('active', button.dataset.payment === state.paymentMode));
+  const isPartial = state.paymentMode === 'partial';
+  $('#partialPaymentFields').hidden = !isPartial;
+  $('#partialPaymentButton').textContent = isPartial ? 'Cancelar abono' : 'Registrar abono';
+  if (isPartial) {
+    const paid = Math.max(0, Number($('#salePaid').value) || 0);
+    $('#paymentStatus').className = `status-preview ${statusClass(paid > 0 ? 'Abono parcial' : 'Pendiente')}`;
+    $('#paymentStatus').textContent = `Falta por cobrar ${money.format(Math.max(0, total - paid))}`;
+  }
 }
 
 function renderHistory() {
@@ -122,14 +132,13 @@ function renderCustomers() {
   $('#customerList').innerHTML = state.customers.map(customer => {
     const purchases = state.sales.filter(sale => sale.customerId === customer.id);
     const debt = customerDebt(customer.id);
-    return `<button class="list-row customer-open text-button" data-customer-id="${customer.id}"><span class="item-main"><strong>${esc(customer.name)}</strong><span>${purchases.length} compra(s)${customer.phone ? ` · ${esc(customer.phone)}` : ''}</span></span><span class="item-side"><span>Debe</span><strong class="${debt ? 'low-stock' : ''}">${money.format(debt)}</strong></span></button>`;
+    return `<button class="list-row customer-open text-button" data-customer-id="${customer.id}"><span class="item-main"><strong>${esc(customer.name)}</strong><span>${purchases.length} compra(s)${customer.phone ? ` · ${esc(customer.phone)}` : ''}</span></span><span class="item-side"><span>Debe</span><strong class="${debt ? 'has-debt' : ''}">${money.format(debt)}</strong></span></button>`;
   }).join('') || '<p class="empty">Agrega tu primer cliente.</p>';
 }
 
 function renderProducts() {
-  $('#productList').innerHTML = state.products.map(product => `<div class="${product.active === false ? 'inactive' : ''}">
-    <div class="list-row"><span class="item-main"><strong>${esc(product.name)}</strong><span>${money.format(product.price)}</span>${product.active === false ? '<span class="badge">Desactivado</span>' : ''}</span><span class="item-side"><span>Disponible</span><strong class="${product.stock <= 5 ? 'low-stock' : ''}">${product.stock}</strong></span></div>
-    <div class="product-actions"><button class="secondary-button product-edit" data-product-id="${product.id}">Editar</button><button class="secondary-button product-restock" data-product-id="${product.id}">Reponer</button></div>
+  $('#productList').innerHTML = state.products.map(product => `<div>
+    <div class="list-row"><span class="item-main"><strong>${esc(product.name)}</strong><span>${money.format(product.price)}</span></span><button class="secondary-button compact-button product-edit" data-product-id="${product.id}">Editar</button></div>
   </div>`).join('') || '<p class="empty">No hay productos.</p>';
 }
 
@@ -169,29 +178,13 @@ function openProduct(product = {}) {
   openModal(product.id ? 'Editar producto' : 'Nuevo producto', `
     <label>Producto<input name="name" required maxlength="80" value="${esc(product.name || '')}"></label>
     <label>Precio USD<input name="price" type="number" min="0" step="0.01" inputmode="decimal" required value="${product.price ?? ''}"></label>
-    ${product.id
-      ? `<div class="summary-card"><span>Existencia disponible</span><strong>${product.stock}</strong></div><label><select name="active"><option value="true" ${product.active !== false ? 'selected' : ''}>Activo</option><option value="false" ${product.active === false ? 'selected' : ''}>Desactivado</option></select></label>`
-      : '<label>Inventario inicial<input name="stock" type="number" min="0" step="1" inputmode="numeric" required value="0"></label>'}
   `, async data => {
     const name = String(data.get('name')).trim();
     const price = Number(data.get('price'));
-    const stock = product.id ? product.stock : Number(data.get('stock'));
-    if (!name || price < 0 || !Number.isInteger(stock) || stock < 0) throw new Error('Revisa los datos del producto.');
-    await put('products', { ...product, name, price, stock, active: product.id ? data.get('active') === 'true' : true });
+    if (!name || !Number.isFinite(price) || price < 0) throw new Error('Revisa los datos del producto.');
+    await put('products', { ...product, name, price });
     await refresh('Producto guardado.');
   });
-}
-
-function openRestock(product) {
-  openModal('Reponer inventario', `
-    <div class="summary-card"><span>${esc(product.name)} · existencia actual</span><strong>${product.stock}</strong></div>
-    <label>Unidades que ingresan<input name="units" type="number" min="1" step="1" inputmode="numeric" required value="1"></label>
-  `, async data => {
-    const units = Number(data.get('units'));
-    if (!Number.isInteger(units) || units < 1) throw new Error('Escribe una cantidad válida.');
-    await put('products', { ...product, stock: product.stock + units });
-    await refresh(`Se agregaron ${units} unidades.`);
-  }, 'Agregar unidades');
 }
 
 function openSale(sale) {
@@ -213,9 +206,9 @@ function openSale(sale) {
   }, debt ? 'Registrar abono' : 'Cerrar');
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
-    if (confirm('¿Eliminar esta venta y devolver los productos al inventario?')) {
+    if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
       state.deletingSales.add(sale.id);
-      try { await deleteSaleAndRestoreInventory(sale); $('#modal').close(); await refresh('Venta eliminada.'); }
+      try { await deleteSale(sale.id); $('#modal').close(); await refresh('Venta eliminada.'); }
       finally { state.deletingSales.delete(sale.id); }
     }
   });
@@ -277,13 +270,35 @@ function exportCsv() {
   download(`renuevo-ventas-${today()}.csv`, '\ufeff' + [header, ...rows].map(row => row.map(csvCell).join(',')).join('\n'), 'text/csv;charset=utf-8');
 }
 
+async function resolveSaleCustomer() {
+  const typedName = $('#saleCustomerName').value.trim();
+  const requestedName = typedName || 'Venta general';
+  const existing = findCustomerByName(state.customers, requestedName);
+  if (existing) return existing.id;
+  const id = await put('customers', { name: requestedName, phone: '' });
+  state.customers.push({ id, name: requestedName, phone: '' });
+  state.customers.sort((a, b) => a.name.localeCompare(b.name));
+  return id;
+}
+
 function bindEvents() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.view)));
   document.querySelectorAll('[data-go]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.go)));
   $('#summaryDate').addEventListener('change', renderSummary);
   $('#historySearch').addEventListener('input', renderHistory);
   $('#historyStatus').addEventListener('change', renderHistory);
-  $('#salePaid').addEventListener('input', renderSaleForm);
+  $('#salePaid').addEventListener('input', updatePaymentUI);
+  document.querySelectorAll('[data-payment]').forEach(button => button.addEventListener('click', () => {
+    state.paymentMode = button.dataset.payment;
+    $('#salePaid').value = '';
+    updatePaymentUI();
+  }));
+  $('#partialPaymentButton').addEventListener('click', () => {
+    state.paymentMode = state.paymentMode === 'partial' ? 'paid' : 'partial';
+    $('#salePaid').value = '';
+    updatePaymentUI();
+    if (state.paymentMode === 'partial') $('#salePaid').focus();
+  });
   $('#newCustomerButton').addEventListener('click', () => openCustomer());
   $('#newProductButton').addEventListener('click', () => openProduct());
   $('#messageSettingsButton').addEventListener('click', openMessageSettings);
@@ -291,27 +306,33 @@ function bindEvents() {
     const product = state.products.find(item => item.id === Number($('#saleProduct').value));
     const quantity = Number($('#saleQuantity').value);
     if (!product || !Number.isInteger(quantity) || quantity < 1) return toast('Selecciona un producto y cantidad válida.');
-    const existing = state.cart.find(item => item.productId === product.id);
-    const desired = quantity + (existing?.quantity || 0);
-    if (desired > product.stock) return toast(`Solo quedan ${product.stock} unidades.`);
-    if (existing) existing.quantity = desired; else state.cart.push({ productId: product.id, name: product.name, price: product.price, quantity });
+    state.cart = addCartItem(state.cart, product, quantity);
     $('#saleQuantity').value = 1;
     renderSaleForm();
+    $('#saleProduct').focus({ preventScroll: true });
   });
   $('#saleItems').addEventListener('click', event => { const button = event.target.closest('[data-cart-index]'); if (button) { state.cart.splice(Number(button.dataset.cartIndex), 1); renderSaleForm(); } });
   $('#saleForm').addEventListener('submit', async event => {
     event.preventDefault();
     if (state.savingSale) return;
     const total = cartTotal();
-    const paidAmount = Number($('#salePaid').value) || 0;
     if (!state.cart.length) return toast('Agrega al menos un producto.');
-    if (paidAmount < 0 || paidAmount > total) return toast('El abono debe estar entre $0 y el total.');
+    let paidAmount;
+    try { paidAmount = resolvePaidAmount(state.paymentMode, total, $('#salePaid').value); }
+    catch (error) { return toast(error.message); }
     state.savingSale = true;
     const saveButton = event.submitter;
     if (saveButton) saveButton.disabled = true;
     try {
-      await saveSaleWithInventory({ customerId: Number($('#saleCustomer').value), date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt: new Date().toISOString() });
-      state.cart = []; $('#salePaid').value = 0; await refresh('Venta guardada.'); navigate('home');
+      const customerId = await resolveSaleCustomer();
+      await saveSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt: new Date().toISOString() });
+      state.cart = [];
+      state.paymentMode = 'paid';
+      $('#salePaid').value = '';
+      $('#saleCustomerName').value = '';
+      $('#saleQuantity').value = 1;
+      await refresh('Venta guardada.');
+      navigate('home');
     } catch (error) { toast(error.message); }
     finally { state.savingSale = false; if (saveButton) saveButton.disabled = false; }
   });
@@ -319,11 +340,9 @@ function bindEvents() {
     const saleButton = event.target.closest('.sale-open');
     const customerButton = event.target.closest('.customer-open');
     const productButton = event.target.closest('.product-edit');
-    const restockButton = event.target.closest('.product-restock');
     if (saleButton && !saleButton.closest('dialog')) openSale(state.sales.find(sale => sale.id === Number(saleButton.dataset.saleId)));
     if (customerButton) openCustomerHistory(state.customers.find(item => item.id === Number(customerButton.dataset.customerId)));
     if (productButton) openProduct(state.products.find(item => item.id === Number(productButton.dataset.productId)));
-    if (restockButton) openRestock(state.products.find(item => item.id === Number(restockButton.dataset.productId)));
   });
   $('#exportCsvButton').addEventListener('click', exportCsv);
   $('#backupButton').addEventListener('click', async () => download(`renuevo-respaldo-${today()}.json`, JSON.stringify(await exportAll(), null, 2), 'application/json'));

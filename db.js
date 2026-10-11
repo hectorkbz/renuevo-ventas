@@ -57,45 +57,14 @@ export async function count(storeName) {
   return requestResult(db.transaction(storeName).objectStore(storeName).count());
 }
 
-export async function saveSaleWithInventory(sale) {
+export async function saveSale(sale) {
   const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['sales', 'products'], 'readwrite');
-    const products = tx.objectStore('products');
-    for (const item of sale.items) {
-      const req = products.get(item.productId);
-      req.onsuccess = () => {
-        const product = req.result;
-        if (!product || product.stock < item.quantity) {
-          tx.abort();
-          return;
-        }
-        product.stock -= item.quantity;
-        products.put(product);
-      };
-    }
-    tx.objectStore('sales').add(sale);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('No se pudo guardar la venta.'));
-    tx.onabort = () => reject(new Error('Inventario insuficiente. Revisa las cantidades.'));
-  });
+  return requestResult(db.transaction('sales', 'readwrite').objectStore('sales').add(sale));
 }
 
-export async function deleteSaleAndRestoreInventory(sale) {
+export async function deleteSale(saleId) {
   const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['sales', 'products'], 'readwrite');
-    const products = tx.objectStore('products');
-    for (const item of sale.items) {
-      const req = products.get(item.productId);
-      req.onsuccess = () => {
-        if (req.result) products.put({ ...req.result, stock: req.result.stock + item.quantity });
-      };
-    }
-    tx.objectStore('sales').delete(sale.id);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
+  return requestResult(db.transaction('sales', 'readwrite').objectStore('sales').delete(saleId));
 }
 
 export async function replaceAll(data) {

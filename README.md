@@ -1,8 +1,8 @@
 # Renuevo Ventas
 
-PWA local para registrar ventas dominicales, cobros e inventario. No requiere servidor de aplicación, cuentas ni servicios externos: los datos permanecen en IndexedDB en el dispositivo.
+PWA local para registrar ventas dominicales y cobros. No requiere servidor de aplicación, cuentas ni servicios externos: los datos permanecen en IndexedDB en el dispositivo.
 
-Incluye administración de productos activos/inactivos, reposición de inventario y mensajes editables de cobranza por WhatsApp. Los precios quedan copiados en cada venta para conservar el historial aunque luego cambie el producto.
+Incluye venta rápida, clientes, productos y mensajes editables de cobranza por WhatsApp. Los precios quedan copiados en cada venta para conservar el historial aunque luego cambie el producto.
 
 ## Probar localmente
 
@@ -35,6 +35,7 @@ Cada instalación del navegador conserva su propia copia. Conviene descargar res
 ```sh
 node tests/validate.mjs
 node tests/billing.test.mjs
+node tests/sales.test.mjs
 node --check app.js
 node --check db.js
 node --check sw.js

@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Renuevo Ventas" />
-    <meta name="description" content="Ventas dominicales, inventario y cobros sin conexión." />
+    <meta name="description" content="Ventas dominicales y cobros sin conexión." />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
     <link rel="icon" href="icons/icon-192.png" type="image/png" />
@@ -39,16 +39,29 @@
 
       <section id="view-sale" class="view" aria-labelledby="saleTitle">
         <div class="section-heading"><div><p class="eyebrow">Nueva operación</p><h2 id="saleTitle">Registrar venta</h2></div></div>
-        <form id="saleForm" class="stack" autocomplete="off">
-          <label>Fecha<input id="saleDate" type="date" required /></label>
-          <label>Cliente<select id="saleCustomer" required></select></label>
-          <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<input id="saleQuantity" type="number" min="1" inputmode="numeric" value="1" /></label></div>
-          <button id="addItemButton" class="secondary-button" type="button">Agregar producto</button>
+        <form id="saleForm" class="stack sale-form" autocomplete="off">
+          <div class="sale-basics">
+            <label>Fecha<input id="saleDate" type="date" required /></label>
+            <label>Cliente<input id="saleCustomerName" list="customerSuggestions" maxlength="80" placeholder="Venta general" autocomplete="off" /><datalist id="customerSuggestions"></datalist></label>
+          </div>
+          <div class="product-picker">
+            <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<select id="saleQuantity" aria-label="Cantidad"></select></label></div>
+            <button id="addItemButton" class="secondary-button" type="button">＋ Agregar a la venta</button>
+          </div>
           <div id="saleItems" class="sale-items"></div>
-          <div class="total-row"><span>Total</span><strong id="saleTotal">$0</strong></div>
-          <label>Abono recibido<input id="salePaid" type="number" min="0" step="0.01" inputmode="decimal" value="0" /></label>
-          <div id="paymentStatus" class="status-preview"></div>
-          <button class="primary-action" type="submit">Guardar venta</button>
+          <div class="checkout-card">
+            <div class="total-row"><span>Total</span><strong id="saleTotal">$0</strong></div>
+            <div class="payment-buttons" role="group" aria-label="Estado del pago">
+              <button id="paidButton" class="payment-button active" type="button" data-payment="paid">✓ Pagó</button>
+              <button id="pendingButton" class="payment-button" type="button" data-payment="pending">Pendiente</button>
+            </div>
+            <button id="partialPaymentButton" class="discreet-button" type="button">Registrar abono</button>
+            <div id="partialPaymentFields" class="partial-payment" hidden>
+              <label>Monto recibido<input id="salePaid" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" /></label>
+              <div id="paymentStatus" class="status-preview"></div>
+            </div>
+            <button id="saveSaleButton" class="primary-action" type="submit">Guardar venta</button>
+          </div>
         </form>
       </section>
 
@@ -65,7 +78,7 @@
 
       <section id="view-more" class="view" aria-labelledby="moreTitle">
         <div class="section-heading"><div><p class="eyebrow">Configuración</p><h2 id="moreTitle">Más</h2></div></div>
-        <div class="card"><div class="card-title-row"><div><h3>Productos</h3><p class="muted">Precios en USD e inventario disponible</p></div><button id="newProductButton" class="round-button small" aria-label="Nuevo producto">＋</button></div><div id="productList" class="list compact"></div></div>
+        <div class="card"><div class="card-title-row"><div><h3>Productos</h3><p class="muted">Nombre y precio en USD</p></div><button id="newProductButton" class="round-button small" aria-label="Nuevo producto">＋</button></div><div id="productList" class="list compact"></div></div>
         <div class="card stack-actions">
           <h3>Configuración de cobranza</h3>
           <p class="muted">Personaliza el saludo, mensaje, despedida y datos bancarios enviados por WhatsApp.</p>

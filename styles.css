@@ -28,22 +28,31 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .whatsapp-button:active { background:#168046; }
 .text-button { border:0; color:var(--green); background:none; font-weight:800; }
 .round-button { width:46px; height:46px; border:0; border-radius:50%; color:#fff; background:var(--green); font-size:24px; } .round-button.small { width:38px;height:38px;font-size:20px; }
-.stack { display:grid; gap:15px; } .inline-add { display:grid; grid-template-columns:1fr 90px; gap:10px; } .stack-actions { display:grid; gap:10px; }
+.stack { display:grid; gap:15px; } .inline-add { display:grid; grid-template-columns:minmax(0,1fr) 88px; gap:10px; } .stack-actions { display:grid; gap:10px; }
+.sale-form { gap:12px; }
+.sale-basics { display:grid; grid-template-columns:130px minmax(0,1fr); gap:10px; }
+.product-picker { display:grid; gap:9px; padding:13px; background:rgba(255,255,255,.72); border:1px solid var(--line); border-radius:18px; }
 .sale-items { display:grid; gap:8px; }
 .sale-item,.list-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 0; border-bottom:1px solid var(--line); }
 .sale-item:last-child,.list-row:last-child { border:0; }
 .item-main { min-width:0; flex:1; } .item-main strong,.item-main span { display:block; } .item-main span,.muted { color:var(--muted); font-size:13px; } .item-side { text-align:right; flex:0 0 auto; }
 .remove-button,.icon-button { border:0; color:var(--danger); background:none; font-size:21px; }
-.total-row { display:flex; justify-content:space-between; padding:15px 0 5px; font-size:20px; } .total-row strong { color:var(--green); }
+.total-row { display:flex; justify-content:space-between; padding:6px 0 10px; font-size:20px; } .total-row strong { color:var(--green); }
+.checkout-card { position:sticky; bottom:calc(67px + env(safe-area-inset-bottom)); z-index:5; display:grid; gap:10px; padding:14px; background:rgba(255,255,255,.97); border:1px solid var(--line); border-radius:20px; box-shadow:0 10px 30px rgba(24,48,42,.12); backdrop-filter:blur(14px); }
+.payment-buttons { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.payment-button { min-height:52px; border:2px solid #bfd0c9; border-radius:15px; color:var(--green-dark); background:#fff; font-size:17px; font-weight:850; }
+.payment-button.active { border-color:var(--green); color:#fff; background:var(--green); box-shadow:0 5px 12px rgba(23,107,82,.18); }
+.discreet-button { justify-self:center; min-height:36px; padding:4px 12px; border:0; color:var(--green); background:none; font-size:13px; font-weight:800; text-decoration:underline; text-underline-offset:3px; }
+.partial-payment { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:10px; }
+.partial-payment[hidden] { display:none; }
+.compact-empty { padding:10px; }
 .status-preview,.status-pill { width:max-content; padding:7px 10px; border-radius:999px; font-size:12px; font-weight:800; }
 .status-Pagado { color:#126143; background:#dff2e8; } .status-Pendiente { color:#a13c3c; background:#fde4e4; } .status-Abono-parcial { color:#8d5a0a; background:#fff0d5; }
 .filters { display:grid; grid-template-columns:1fr 145px; gap:9px; margin-bottom:12px; }
 .empty { padding:28px 10px; color:var(--muted); text-align:center; }
 .compact .list-row { padding:11px 0; }
-.low-stock { color:var(--danger)!important; font-weight:800; }
-.inactive { opacity:.58; }
-.badge { display:inline-block!important; width:max-content; margin-top:4px; padding:3px 7px; border-radius:999px; color:#586762!important; background:#e8ecea; font-size:11px!important; font-weight:800; }
-.product-actions { display:grid; grid-template-columns:1fr 1fr; gap:9px; padding:8px 0 14px; border-bottom:1px solid var(--line); }
+.has-debt { color:var(--danger)!important; font-weight:800; }
+.compact-button { width:auto; min-height:42px; padding:8px 14px; flex:0 0 auto; }
 textarea { width:100%; min-height:130px; padding:12px 13px; resize:vertical; color:var(--ink); background:var(--white); border:1px solid var(--line); border-radius:13px; font:inherit; outline:none; }
 textarea:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(23,107,82,.12); }
 .message-preview { min-height:300px; white-space:pre-wrap; }
@@ -54,4 +63,5 @@ dialog { width:min(calc(100% - 28px),520px); max-height:85vh; padding:0; border:
 .file-button input { display:none; }
 .toast { position:fixed; z-index:50; left:50%; bottom:calc(90px + env(safe-area-inset-bottom)); max-width:calc(100% - 32px); padding:12px 18px; border-radius:14px; color:#fff; background:#173b31; box-shadow:0 10px 30px rgba(0,0,0,.2); opacity:0; pointer-events:none; transform:translate(-50%,12px); transition:.2s; } .toast.show { opacity:1; transform:translate(-50%,0); }
 @media (min-width:700px) { .bottom-nav { left:50%; width:680px; transform:translateX(-50%); border:1px solid var(--line); border-bottom:0; border-radius:20px 20px 0 0; } }
-@media (max-width:360px) { .filters { grid-template-columns:1fr; } .summary-card strong { font-size:21px; } }
+@media (max-width:420px) { .app-shell { padding-left:12px; padding-right:12px; } .sale-basics { grid-template-columns:112px minmax(0,1fr); } .partial-payment { grid-template-columns:1fr; align-items:start; } .summary-card strong { font-size:22px; } }
+@media (max-width:360px) { .filters { grid-template-columns:1fr; } .sale-basics { grid-template-columns:1fr; } .summary-card strong { font-size:21px; } }

@@ -1,7 +1,7 @@
 {
   "name": "Renuevo Ventas",
   "short_name": "Renuevo",
-  "description": "Registro de ventas dominicales, inventario y cobros sin conexión.",
+  "description": "Registro de ventas dominicales y cobros sin conexión.",
   "lang": "es",
   "start_url": "./",
   "scope": "./",
