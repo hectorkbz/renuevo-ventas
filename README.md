@@ -2,6 +2,8 @@
 
 PWA local para registrar ventas dominicales, cobros e inventario. No requiere servidor de aplicación, cuentas ni servicios externos: los datos permanecen en IndexedDB en el dispositivo.
 
+Incluye administración de productos activos/inactivos, reposición de inventario y mensajes editables de cobranza por WhatsApp. Los precios quedan copiados en cada venta para conservar el historial aunque luego cambie el producto.
+
 ## Probar localmente
 
 Los service workers requieren HTTP o HTTPS. Desde esta carpeta:
@@ -11,6 +13,14 @@ python3 -m http.server 4173
 ```
 
 Abre `http://localhost:4173`. En iPhone, publícala mediante cualquier alojamiento HTTPS estático, ábrela en Safari y usa **Compartir → Agregar a pantalla de inicio**.
+
+## Publicar en GitHub Pages
+
+1. Crea un repositorio en GitHub y sube la rama `main`.
+2. En **Settings → Pages → Build and deployment**, selecciona **GitHub Actions**.
+3. El flujo incluido en `.github/workflows/deploy-pages.yml` publicará cada cambio enviado a `main`.
+
+Todas las rutas son relativas, por lo que la aplicación funciona bajo un subdirectorio como `usuario.github.io/renuevo-ventas/`.
 
 ## Datos y respaldos
 
@@ -24,6 +34,7 @@ Cada instalación del navegador conserva su propia copia. Conviene descargar res
 
 ```sh
 node tests/validate.mjs
+node tests/billing.test.mjs
 node --check app.js
 node --check db.js
 node --check sw.js

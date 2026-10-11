@@ -65,7 +65,12 @@
 
       <section id="view-more" class="view" aria-labelledby="moreTitle">
         <div class="section-heading"><div><p class="eyebrow">Configuración</p><h2 id="moreTitle">Más</h2></div></div>
-        <div class="card"><div class="card-title-row"><h3>Productos e inventario</h3><button id="newProductButton" class="round-button small" aria-label="Nuevo producto">＋</button></div><div id="productList" class="list compact"></div></div>
+        <div class="card"><div class="card-title-row"><div><h3>Productos</h3><p class="muted">Precios en USD e inventario disponible</p></div><button id="newProductButton" class="round-button small" aria-label="Nuevo producto">＋</button></div><div id="productList" class="list compact"></div></div>
+        <div class="card stack-actions">
+          <h3>Configuración de cobranza</h3>
+          <p class="muted">Personaliza el saludo, mensaje, despedida y datos bancarios enviados por WhatsApp.</p>
+          <button id="messageSettingsButton" class="secondary-button">Editar mensaje de WhatsApp</button>
+        </div>
         <div class="card stack-actions">
           <h3>Exportar y respaldar</h3>
           <button id="exportCsvButton" class="secondary-button">Exportar ventas a CSV</button>
