@@ -53,6 +53,16 @@ daniela.paidAmount = secondPayment.paidAmount;
 assert.deepEqual(summarizeSales([daniela]), { total: 6, paid: 5, pending: 1 }, 'un abono posterior de $3 debe dejar $1');
 assert.deepEqual(daniela.items.map(item => item.paidQuantity), [1, 1, 0], 'el dólar restante debe permanecer como abono sin marcar otro producto completo');
 
+const paidSeven = migrateSaleRecord({ id: 30, customerId: 7, date: '2026-10-11', paidAmount: 7, items: [{ name: 'Producto', price: 7, quantity: 1 }] });
+const correctedSeven = changeItemPaidQuantity(paidSeven, 0, 0, '2026-10-11T14:00:00Z', true);
+assert.deepEqual(summarizeSales([correctedSeven]), { total: 7, paid: 0, pending: 7 }, 'una venta de $7 debe poder corregirse completamente a pendiente');
+assert.equal(correctedSeven.paymentCorrections.length, 1, 'la corrección de unidades debe quedar auditada');
+assert.equal(correctedSeven.payments.length, paidSeven.payments.length, 'corregir no debe eliminar el pago histórico');
+const correctedUp = changeItemPaidQuantity(correctedSeven, 0, 1, '2026-10-11T14:05:00Z', true);
+assert.equal(correctedUp.paidAmount, 7, 'la corrección también debe permitir aumentar unidades pagadas');
+assert.equal(correctedUp.paymentCorrections.length, 2);
+assert.equal(correctedUp.payments.length, paidSeven.payments.length, 'aumentar mediante corrección no debe crear un pago duplicado');
+
 const grouped = mergeDailySales([
   { id: 1, customerId: 7, date: '2026-10-11', paidAmount: 2, items: [{ name: 'A', price: 2, quantity: 1 }] },
   { id: 2, customerId: 7, date: '2026-10-11', paidAmount: 0, items: [{ name: 'B', price: 2, quantity: 1 }] }

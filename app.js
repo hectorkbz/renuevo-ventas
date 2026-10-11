@@ -7,6 +7,12 @@ const $ = selector => document.querySelector(selector);
 const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
+const compactDateLabel = value => {
+  const parts = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short' }).formatToParts(new Date(`${value}T12:00:00`));
+  const day = parts.find(part => part.type === 'day')?.value || '';
+  const month = (parts.find(part => part.type === 'month')?.value || '').replace('.', '');
+  return `${day} ${month}.`;
+};
 const dateTimeLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
 const today = () => new Date().toISOString().slice(0, 10);
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
@@ -106,14 +112,16 @@ function renderCustomerSuggestions() {
   const suggestions = $('#customerSuggestions');
   suggestions.innerHTML = matches.map(customer => `<button type="button" class="customer-suggestion" role="option" data-select-customer="${customer.id}"><strong>${esc(customer.name)}</strong><span>${esc(customer.phone || 'Sin teléfono')}</span></button>`).join('');
   suggestions.hidden = !input.matches(':focus') || !matches.length;
+  $('.sale-basics').style.marginBottom = suggestions.hidden ? '' : `${Math.min(matches.length, 4) * 47 + 8}px`;
   input.setAttribute('aria-expanded', String(!suggestions.hidden));
 }
 
 function selectSaleCustomer(customer) {
   state.selectedCustomerId = customer?.id || null;
   $('#saleCustomerName').value = customer?.name === 'Venta general' ? '' : (customer?.name || '');
-  $('#selectedCustomerInfo').textContent = customer ? `${customer.name}${customer.phone ? ` · ${customer.phone}` : ' · Sin teléfono'}` : 'Cliente nuevo: se creará al guardar';
+  $('#saleCustomerPhone').value = customer?.name === 'Venta general' ? '' : (customer?.phone || '');
   $('#customerSuggestions').hidden = true;
+  $('.sale-basics').style.marginBottom = '';
   $('#saleCustomerName').setAttribute('aria-expanded', 'false');
 }
 
@@ -212,12 +220,11 @@ function saleItemPaymentRow(item, index) {
   const paidQuantity = Math.min(item.quantity, Math.max(0, Number(item.paidQuantity) || 0));
   const pendingQuantity = item.quantity - paidQuantity;
   const payOptions = Array.from({ length: pendingQuantity }, (_, option) => `<option value="${option + 1}">${option + 1}</option>`).join('');
-  const correctionOptions = Array.from({ length: paidQuantity + 1 }, (_, option) => `<option value="${option}" ${option === paidQuantity ? 'selected' : ''}>${option}</option>`).join('');
+  const correctionOptions = Array.from({ length: item.quantity + 1 }, (_, option) => `<option value="${option}" ${option === paidQuantity ? 'selected' : ''}>${option}</option>`).join('');
   return `<div class="sale-product-payment">
-    <div class="product-payment-top"><span><strong>${esc(item.name)}</strong><br><span class="muted">${item.quantity} unidad(es) · ${money.format(item.price)} c/u</span></span><strong>${money.format(item.price * item.quantity)}</strong></div>
-    <span class="status-pill ${paidQuantity === item.quantity ? 'status-Pagado' : paidQuantity ? 'status-Abono-parcial' : 'status-Pendiente'}">${paidQuantity} pagada(s) · ${pendingQuantity} pendiente(s)</span>
+    <div class="product-payment-top"><span class="item-main"><strong>${esc(item.name)}</strong><span>${item.quantity} × ${money.format(item.price)}</span></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><span class="compact-payment-state ${paidQuantity === item.quantity ? 'paid' : paidQuantity ? 'partial' : ''}">${paidQuantity} pag. · ${pendingQuantity} pend.</span></span></div>
     ${pendingQuantity ? `<div class="product-payment-controls"><select data-pay-units="${index}" aria-label="Unidades a pagar">${payOptions}</select><button type="button" class="primary-action later-payment-button" data-pay-item="${index}">Registrar pago de unidades</button></div>` : ''}
-    ${paidQuantity ? `<div class="product-payment-controls"><select data-correct-units="${index}" aria-label="Corregir unidades pagadas">${correctionOptions}</select><button type="button" class="secondary-button later-payment-button" data-correct-item="${index}">Corregir unidades pagadas</button></div>` : ''}
+    <div class="product-payment-controls correction-controls"><select data-correct-units="${index}" aria-label="Corregir unidades pagadas">${correctionOptions}</select><button type="button" class="secondary-button later-payment-button" data-correct-item="${index}">Corregir unidades</button></div>
   </div>`;
 }
 
@@ -290,7 +297,7 @@ async function updateItemPayment(saleId, itemIndex, paidQuantity, isCorrection) 
   const currentSale = state.sales.find(item => item.id === saleId);
   if (!currentSale) return toast('No se encontró la venta.');
   let updated;
-  try { updated = changeItemPaidQuantity(currentSale, itemIndex, paidQuantity); }
+  try { updated = changeItemPaidQuantity(currentSale, itemIndex, paidQuantity, new Date().toISOString(), isCorrection); }
   catch (error) { return toast(error.message); }
   const oldAmount = Number(currentSale.paidAmount || 0);
   if (isCorrection && !confirm(`¿Corregir las unidades pagadas?\n\nImporte anterior: ${money.format(oldAmount)}\nImporte nuevo: ${money.format(updated.paidAmount)}`)) return;
@@ -427,13 +434,27 @@ function exportCsv() {
 
 async function resolveSaleCustomer() {
   const typedName = $('#saleCustomerName').value.trim();
+  const phone = $('#saleCustomerPhone').value.trim();
   const requestedName = typedName || 'Venta general';
   const selected = state.customers.find(customer => customer.id === state.selectedCustomerId);
-  if (selected && normalizeText(selected.name) === normalizeText(requestedName)) return selected.id;
+  if (selected && normalizeText(selected.name) === normalizeText(requestedName)) {
+    if (selected.phone !== phone) {
+      await put('customers', { ...selected, phone });
+      selected.phone = phone;
+    }
+    return selected.id;
+  }
   const existing = findCustomerByName(state.customers, requestedName);
-  if (existing) return existing.id;
-  const id = await put('customers', { name: requestedName, phone: '' });
-  state.customers.push({ id, name: requestedName, phone: '' });
+  if (existing) {
+    const resolvedPhone = phone || existing.phone || '';
+    if (existing.name !== 'Venta general' && existing.phone !== resolvedPhone) {
+      await put('customers', { ...existing, phone: resolvedPhone });
+      existing.phone = resolvedPhone;
+    }
+    return existing.id;
+  }
+  const id = await put('customers', { name: requestedName, phone });
+  state.customers.push({ id, name: requestedName, phone });
   state.customers.sort((a, b) => a.name.localeCompare(b.name));
   return id;
 }
@@ -446,11 +467,11 @@ function bindEvents() {
   $('#historyStatus').addEventListener('change', renderHistory);
   $('#saleCustomerName').addEventListener('input', () => {
     state.selectedCustomerId = null;
-    $('#selectedCustomerInfo').textContent = $('#saleCustomerName').value.trim() ? 'Cliente nuevo: se creará al guardar si no seleccionas una sugerencia' : 'Venta general';
     renderCustomerSuggestions();
   });
   $('#saleCustomerName').addEventListener('focus', renderCustomerSuggestions);
-  $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
+  $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('.sale-basics').style.marginBottom = ''; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
+  $('#saleDate').addEventListener('change', () => { $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value); });
   $('#salePaid').addEventListener('input', () => {
     state.cart = allocateNewPaymentToUnits(state.cart.map(item => ({ ...item, paidQuantity: 0 })), Number($('#salePaid').value) || 0);
     renderSaleForm();
@@ -511,8 +532,8 @@ function bindEvents() {
       state.paymentMode = 'paid';
       $('#salePaid').value = '';
       $('#saleCustomerName').value = '';
+      $('#saleCustomerPhone').value = '';
       state.selectedCustomerId = null;
-      $('#selectedCustomerInfo').textContent = 'Venta general';
       $('#saleQuantity').value = 1;
       await refresh(result.accumulated ? 'Compra añadida a la venta del día.' : 'Venta guardada.');
       navigate('home');
@@ -545,6 +566,7 @@ function bindEvents() {
 async function init() {
   $('#summaryDate').value = today();
   $('#saleDate').value = today();
+  $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value);
   bindEvents();
   try { await seedDefaults(); await loadState(); renderAll(); } catch (error) { console.error(error); toast('No se pudo abrir el almacenamiento local.'); }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(console.error);

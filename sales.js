@@ -114,7 +114,7 @@ export function mergeDailySales(sales, purchase) {
   return { sale: purchase ? appendPurchaseToSale(target, purchase) : target, removedIds: ordered.slice(1).map(sale => sale.id) };
 }
 
-export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = new Date().toISOString()) {
+export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = new Date().toISOString(), correction = false) {
   const current = migrateSaleRecord(sale);
   const item = current.items[itemIndex];
   const quantity = Number(newPaidQuantity);
@@ -130,8 +130,8 @@ export function changeItemPaidQuantity(sale, itemIndex, newPaidQuantity, at = ne
     ...current,
     items,
     paidAmount: nextPaid,
-    payments: difference > 0 ? [...current.payments, { amount: difference, at, kind: 'product', itemIndex, quantity: quantity - previousQuantity }] : current.payments,
-    paymentCorrections: difference < 0 ? [...current.paymentCorrections, event] : current.paymentCorrections,
+    payments: difference > 0 && !correction ? [...current.payments, { amount: difference, at, kind: 'product', itemIndex, quantity: quantity - previousQuantity }] : current.payments,
+    paymentCorrections: correction || difference < 0 ? [...current.paymentCorrections, event] : current.paymentCorrections,
     updatedAt: at
   };
 }

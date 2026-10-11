@@ -25,6 +25,9 @@ const html = await readFile(new URL('index.html', root), 'utf8');
 assert.ok(html.includes('apple-mobile-web-app-capable'));
 assert.ok(html.includes('viewport-fit=cover'));
 assert.ok(html.includes('<select id="saleQuantity"'), 'la cantidad debe usar selector nativo');
+assert.ok(html.includes('id="saleDateDisplay"'), 'la fecha visible debe usar el formato compacto sin año');
+assert.ok(html.includes('id="saleCustomerPhone" type="tel" inputmode="tel"'), 'el teléfono debe activar el teclado telefónico');
+assert.ok(!html.match(/id="saleCustomerPhone"[^>]*required/), 'el teléfono no debe ser obligatorio');
 for (const relativeReference of ['href="manifest.webmanifest"', 'src="app.js"', 'href="styles.css"']) assert.ok(html.includes(relativeReference));
 
 for (const icon of manifest.icons) await access(new URL(icon.src, root));

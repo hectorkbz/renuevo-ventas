@@ -33,8 +33,9 @@
         <div class="section-heading sale-heading"><h2 id="saleTitle">Registrar venta</h2></div>
         <form id="saleForm" class="stack sale-form" autocomplete="off">
           <div class="sale-basics">
-            <label>Fecha<input id="saleDate" type="date" required /></label>
-            <div class="customer-search"><label>Cliente<input id="saleCustomerName" maxlength="80" placeholder="Venta general" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="customerSuggestions" aria-expanded="false" /></label><div id="customerSuggestions" class="customer-suggestions" role="listbox" hidden></div><p id="selectedCustomerInfo" class="selected-customer-info">Venta general</p></div>
+            <label class="sale-date-field">Fecha<span class="compact-date"><span id="saleDateDisplay"></span><input id="saleDate" type="date" required aria-label="Fecha completa de la venta" /></span></label>
+            <div class="customer-search"><label>Cliente<input id="saleCustomerName" maxlength="80" placeholder="Venta general" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="customerSuggestions" aria-expanded="false" /></label><div id="customerSuggestions" class="customer-suggestions" role="listbox" hidden></div></div>
+            <label class="sale-phone-field">Teléfono<input id="saleCustomerPhone" type="tel" inputmode="tel" maxlength="30" autocomplete="tel" /></label>
           </div>
           <div class="product-picker">
             <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<select id="saleQuantity" aria-label="Cantidad"></select></label></div>
