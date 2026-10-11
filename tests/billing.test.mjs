@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildCollectionMessage, buildDetailedCollectionMessage, summarizeCollectionByDate, summarizePendingSales, whatsappPhone } from '../billing.js';
+import { buildCollectionMessage, buildDetailedCollectionMessage, summarizeCollectionByDate, summarizePendingSales, whatsappPhone, whatsappUrl } from '../billing.js';
 
 const sales = [
   { customerId: 7, paidAmount: 5, items: [{ productId: 1, name: 'Café', price: 3, quantity: 2 }] },
@@ -36,12 +36,47 @@ assert.equal(allDebt.pending, 12, 'la cobranza acumulada debe sumar $5 y $7');
 assert.equal(allDebt.entries.length, 2, 'debe conservar separadas las fechas');
 const detailedMessage = buildDetailedCollectionMessage({ name: 'Daniela' }, allDebt);
 assert.match(detailedMessage, /Daniela/);
-assert.match(detailedMessage, /1 × Malta/);
+assert.match(detailedMessage, /2 × Malta \(1 pendiente\)/);
 assert.match(detailedMessage, /1 × Tequeños/);
-assert.match(detailedMessage, /Total acumulado por cobrar: \$12\.00 USD/);
+assert.match(detailedMessage, /Total pendiente: \$12\.00 BCV/);
 assert.match(detailedMessage, /Banco de Venezuela/);
 assert.doesNotMatch(detailedMessage, /Otro/);
 assert.deepEqual(datedSales, datedSalesBefore, 'generar la cobranza no debe modificar saldos');
+
+const mixedPaymentSales = [
+  { id: 30, customerId: 7, date: '2026-10-04', paidAmount: 5, monetaryPaidAmount: 0, items: [{ name: 'Malta', price: 5, quantity: 2, paidQuantity: 1 }] },
+  { id: 31, customerId: 7, date: '2026-10-11', paidAmount: 3, monetaryPaidAmount: 3, items: [{ name: 'Tequeños', price: 7, quantity: 1, paidQuantity: 0 }] }
+];
+const mixedSummary = summarizeCollectionByDate(7, mixedPaymentSales);
+assert.equal(mixedSummary.pending, 9, 'el saldo debe coincidir con los importes registrados');
+assert.equal(mixedSummary.entries[0].unitPaid, 5);
+assert.equal(mixedSummary.entries[0].monetaryPaid, 0);
+assert.equal(mixedSummary.entries[1].monetaryPaid, 3);
+const mixedMessage = buildDetailedCollectionMessage({ name: 'Daniela' }, mixedSummary);
+assert.match(mixedMessage, /Total de venta: \$10\.00/);
+assert.match(mixedMessage, /Pagado por productos: \$5\.00/);
+assert.match(mixedMessage, /Abonado: \$3\.00/);
+assert.match(mixedMessage, /Saldo pendiente de esta fecha: \$5\.00[\s\S]*Saldo pendiente de esta fecha: \$4\.00/);
+assert.equal((mixedMessage.match(/Abonado:/g) || []).length, 1, 'solo la fecha con abono monetario muestra esa línea');
+assert.doesNotMatch(mixedMessage, /Abonado: \$0\.00/, 'no debe mostrar abonos en cero');
+
+const urlMessage = '¡Hola, Daniela! 💚\n📋 Cuenta: $12.00 🙌';
+const encodedUrl = whatsappUrl(urlMessage, '0412-123.4567');
+const encodedText = new URL(encodedUrl).searchParams.get('text');
+assert.equal(encodedText, urlMessage, 'el enlace debe decodificar al texto original sin doble codificación');
+assert.match(encodedUrl, /wa\.me\/584121234567\?/);
+assert.doesNotMatch(urlMessage, /�/, 'el mensaje Unicode no debe contener caracteres de reemplazo');
+assert.match(urlMessage, /💚|📋|🙌/, 'los emojis deben conservarse en el mensaje');
+
+const oldTemplate = buildDetailedCollectionMessage({ name: 'María' }, oneSale, {
+  greeting: '¡Hola, {nombre}! 👋🏼',
+  introduction: 'Muchísimas gracias por apoyarnos en la vendimia a beneficio del Encuentro Renuevo. 🙏🏼',
+  paymentInstructions: 'Cuando realices el pago, por favor envíanos el comprobante por este medio para registrar tu abono.',
+  farewell: '¡Gracias por tu generosidad! Dios te bendiga. Un abrazo. ✨',
+  bankDetails: '📱 04121541371\n🏦 Banco de Venezuela\n🪪 V-21023200'
+});
+assert.match(oldTemplate, /Gracias por apoyar nuestro Encuentro Renuevo\. 💚/, 'actualiza los valores predeterminados antiguos guardados localmente');
+assert.match(oldTemplate, /📱 04121541371/, 'conserva los datos bancarios configurados');
 
 assert.equal(whatsappPhone('0412-123.4567'), '584121234567');
 assert.equal(whatsappPhone('+58 412 1234567'), '584121234567');

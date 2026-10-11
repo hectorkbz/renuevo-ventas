@@ -1,5 +1,5 @@
 import { consolidateCustomerSales, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
-import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappPhone } from './billing.js';
+import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappUrl } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
 import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
@@ -446,9 +446,7 @@ function openCollectionMessage(customer, saleId = null) {
       await put('customers', { ...customer, phone: enteredPhone });
       customer.phone = enteredPhone;
     }
-    const phone = whatsappPhone(enteredPhone || customer.phone);
-    const url = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
-    window.location.href = url;
+    window.location.href = whatsappUrl(message, enteredPhone || customer.phone);
   }, 'Abrir WhatsApp');
   if (saleId !== null) reopenSaleAfterCancel(saleId);
   $('#modalBody').querySelectorAll('[data-scope]').forEach(button => button.addEventListener('click', () => {
