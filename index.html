@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#176b52" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Renuevo Ventas" />
+    <meta name="description" content="Ventas dominicales, inventario y cobros sin conexión." />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Renuevo Ventas</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Iglesia Renuevo</p>
+        <h1>Ventas</h1>
+      </div>
+      <span id="connectionBadge" class="connection-badge">Sin conexión</span>
+    </header>
+
+    <main id="app" class="app-shell">
+      <section id="view-home" class="view active" aria-labelledby="homeTitle">
+        <div class="section-heading">
+          <div><p class="eyebrow">Resumen del domingo</p><h2 id="homeTitle">Hoy</h2></div>
+          <input id="summaryDate" class="date-input" type="date" aria-label="Fecha del resumen" />
+        </div>
+        <div id="summaryCards" class="summary-grid"></div>
+        <button class="primary-action" data-go="sale"><span>＋</span> Registrar venta</button>
+        <div class="card">
+          <div class="card-title-row"><h3>Ventas recientes</h3><button class="text-button" data-go="history">Ver todas</button></div>
+          <div id="recentSales" class="list"></div>
+        </div>
+      </section>
+
+      <section id="view-sale" class="view" aria-labelledby="saleTitle">
+        <div class="section-heading"><div><p class="eyebrow">Nueva operación</p><h2 id="saleTitle">Registrar venta</h2></div></div>
+        <form id="saleForm" class="stack" autocomplete="off">
+          <label>Fecha<input id="saleDate" type="date" required /></label>
+          <label>Cliente<select id="saleCustomer" required></select></label>
+          <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<input id="saleQuantity" type="number" min="1" inputmode="numeric" value="1" /></label></div>
+          <button id="addItemButton" class="secondary-button" type="button">Agregar producto</button>
+          <div id="saleItems" class="sale-items"></div>
+          <div class="total-row"><span>Total</span><strong id="saleTotal">$0</strong></div>
+          <label>Abono recibido<input id="salePaid" type="number" min="0" step="0.01" inputmode="decimal" value="0" /></label>
+          <div id="paymentStatus" class="status-preview"></div>
+          <button class="primary-action" type="submit">Guardar venta</button>
+        </form>
+      </section>
+
+      <section id="view-history" class="view" aria-labelledby="historyTitle">
+        <div class="section-heading"><div><p class="eyebrow">Movimientos</p><h2 id="historyTitle">Historial</h2></div></div>
+        <div class="filters"><input id="historySearch" type="search" placeholder="Buscar cliente…" /><select id="historyStatus"><option value="">Todos los estados</option><option>Pendiente</option><option>Abono parcial</option><option>Pagado</option></select></div>
+        <div id="historyList" class="list"></div>
+      </section>
+
+      <section id="view-people" class="view" aria-labelledby="peopleTitle">
+        <div class="section-heading"><div><p class="eyebrow">Cuentas</p><h2 id="peopleTitle">Clientes</h2></div><button id="newCustomerButton" class="round-button" aria-label="Nuevo cliente">＋</button></div>
+        <div id="customerList" class="list"></div>
+      </section>
+
+      <section id="view-more" class="view" aria-labelledby="moreTitle">
+        <div class="section-heading"><div><p class="eyebrow">Configuración</p><h2 id="moreTitle">Más</h2></div></div>
+        <div class="card"><div class="card-title-row"><h3>Productos e inventario</h3><button id="newProductButton" class="round-button small" aria-label="Nuevo producto">＋</button></div><div id="productList" class="list compact"></div></div>
+        <div class="card stack-actions">
+          <h3>Exportar y respaldar</h3>
+          <button id="exportCsvButton" class="secondary-button">Exportar ventas a CSV</button>
+          <button id="backupButton" class="secondary-button">Descargar respaldo</button>
+          <label class="file-button">Restaurar respaldo<input id="restoreInput" type="file" accept="application/json,.json" /></label>
+        </div>
+        <div class="card"><h3>Instalar en iPhone</h3><p class="muted">En Safari, toca Compartir y luego “Agregar a pantalla de inicio”.</p></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Navegación principal">
+      <button class="nav-item active" data-view="home"><span>⌂</span>Inicio</button>
+      <button class="nav-item" data-view="sale"><span>＋</span>Venta</button>
+      <button class="nav-item" data-view="history"><span>▤</span>Historial</button>
+      <button class="nav-item" data-view="people"><span>♙</span>Clientes</button>
+      <button class="nav-item" data-view="more"><span>•••</span>Más</button>
+    </nav>
+
+    <dialog id="modal"><form id="modalForm" method="dialog"><div class="modal-header"><h2 id="modalTitle"></h2><button class="icon-button" value="cancel" formnovalidate aria-label="Cerrar">×</button></div><div id="modalBody" class="stack"></div><div class="modal-actions"><button class="secondary-button" value="cancel" formnovalidate>Cancelar</button><button id="modalSave" class="primary-action" value="default">Guardar</button></div></form></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
