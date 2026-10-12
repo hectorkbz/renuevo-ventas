@@ -4,7 +4,7 @@ import { PRODUCT_CATALOG } from './catalog.js';
 import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'paid', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'pending', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
 const compactDateLabel = value => {
@@ -92,15 +92,11 @@ function saleRow(sale) {
 }
 
 function renderSaleForm() {
-  const productValue = $('#saleProduct').value;
-  $('#saleProduct').innerHTML = state.products.map(item => `<option value="${item.id}">${esc(item.name)} — ${money.format(item.price)}</option>`).join('') || '<option value="">Agrega un producto en Configuración</option>';
-  if (productValue) $('#saleProduct').value = productValue;
+  $('#saleProduct').innerHTML = `<option value="" selected>Elegir producto...</option>${state.products.map(item => `<option value="${item.id}">${esc(item.name)} — ${money.format(item.price)}</option>`).join('')}`;
   if (!$('#saleQuantity').options.length) $('#saleQuantity').innerHTML = Array.from({ length: 20 }, (_, index) => `<option value="${index + 1}">${index + 1}</option>`).join('');
-  $('#saleItems').innerHTML = state.cart.map((item, index) => {
-    const paidQuantity = Number(item.paidQuantity) || 0;
-    const options = Array.from({ length: item.quantity + 1 }, (_, quantity) => `<option value="${quantity}" ${quantity === paidQuantity ? 'selected' : ''}>${quantity}</option>`).join('');
-    return `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><label class="cart-paid-label">Pagadas<select data-cart-paid="${index}" aria-label="Unidades pagadas de ${esc(item.name)}">${options}</select></label><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`;
-  }).join('') || '<p class="empty compact-empty">Agrega uno o más productos.</p>';
+  $('#saleItems').innerHTML = state.cart.map((item, index) =>
+    `<div class="sale-item"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong></span><span class="item-side"><strong>${money.format(item.price * item.quantity)}</strong><button type="button" class="remove-button" data-cart-index="${index}" aria-label="Quitar">×</button></span></div>`
+  ).join('') || '<p class="empty compact-empty">Agrega uno o más productos.</p>';
   updatePaymentUI();
 }
 
@@ -556,7 +552,7 @@ function bindEvents() {
     updatePaymentUI();
   }));
   $('#partialPaymentButton').addEventListener('click', () => {
-    state.paymentMode = state.paymentMode === 'partial' ? 'paid' : 'partial';
+    state.paymentMode = state.paymentMode === 'partial' ? 'pending' : 'partial';
     state.cart = state.cart.map(item => ({ ...item, paidQuantity: state.paymentMode === 'paid' ? item.quantity : 0 }));
     $('#salePaid').value = '';
     updatePaymentUI();
@@ -571,21 +567,11 @@ function bindEvents() {
     if (!product || !Number.isInteger(quantity) || quantity < 1) return toast('Selecciona un producto y cantidad válida.');
     state.cart = addCartItem(state.cart, product, quantity);
     state.cart = state.cart.map(item => ({ ...item, paidQuantity: state.paymentMode === 'paid' ? item.quantity : (Number(item.paidQuantity) || 0) }));
+    $('#saleProduct').value = '';
     $('#saleQuantity').value = 1;
     renderSaleForm();
-    $('#saleProduct').focus({ preventScroll: true });
   });
   $('#saleItems').addEventListener('click', event => { const button = event.target.closest('[data-cart-index]'); if (button) { state.cart.splice(Number(button.dataset.cartIndex), 1); renderSaleForm(); } });
-  $('#saleItems').addEventListener('change', event => {
-    const select = event.target.closest('[data-cart-paid]');
-    if (!select) return;
-    const index = Number(select.dataset.cartPaid);
-    state.cart[index] = { ...state.cart[index], paidQuantity: Number(select.value) };
-    const paid = roundMoney(state.cart.reduce((sum, item) => sum + (Number(item.paidQuantity) || 0) * item.price, 0));
-    state.paymentMode = paid <= 0 ? 'pending' : paid >= cartTotal() ? 'paid' : 'partial';
-    $('#salePaid').value = state.paymentMode === 'partial' ? paid : '';
-    updatePaymentUI();
-  });
   $('#saleForm').addEventListener('submit', async event => {
     event.preventDefault();
     if (state.savingSale) return;
@@ -602,7 +588,7 @@ function bindEvents() {
       const createdAt = new Date().toISOString();
       const result = await saveOrAppendSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt });
       state.cart = [];
-      state.paymentMode = 'paid';
+      state.paymentMode = 'pending';
       $('#salePaid').value = '';
       $('#saleCustomerName').value = '';
       $('#saleCustomerPhone').value = '';

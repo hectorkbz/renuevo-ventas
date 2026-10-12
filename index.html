@@ -38,15 +38,15 @@
             <label class="sale-phone-field">Teléfono<input id="saleCustomerPhone" type="tel" inputmode="tel" maxlength="30" autocomplete="tel" /></label>
           </div>
           <div class="product-picker">
-            <div class="inline-add"><label>Producto<select id="saleProduct"></select></label><label class="qty-label">Cantidad<select id="saleQuantity" aria-label="Cantidad"></select></label></div>
+            <div class="inline-add"><label>Producto<select id="saleProduct"><option value="" selected>Elegir producto...</option></select></label><label class="qty-label">Cantidad<select id="saleQuantity" aria-label="Cantidad"></select></label></div>
             <button id="addItemButton" class="secondary-button" type="button">＋ Agregar a la venta</button>
           </div>
           <div id="saleItems" class="sale-items"></div>
           <div class="checkout-card">
             <div class="total-row"><span>Total</span><strong id="saleTotal">$0</strong></div>
             <div class="payment-buttons" role="group" aria-label="Estado del pago">
-              <button id="paidButton" class="payment-button active" type="button" data-payment="paid">✓ Pagó</button>
-              <button id="pendingButton" class="payment-button" type="button" data-payment="pending">Pendiente</button>
+              <button id="paidButton" class="payment-button" type="button" data-payment="paid">✓ Pagó</button>
+              <button id="pendingButton" class="payment-button active" type="button" data-payment="pending">Pendiente</button>
             </div>
             <button id="partialPaymentButton" class="discreet-button" type="button">Registrar abono</button>
             <div id="partialPaymentFields" class="partial-payment" hidden>

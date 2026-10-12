@@ -29,11 +29,20 @@ assert.ok(html.includes('<select id="saleQuantity"'), 'la cantidad debe usar sel
 assert.ok(html.includes('id="saleDateDisplay"'), 'la fecha visible debe usar el formato compacto sin año');
 assert.ok(html.includes('id="saleCustomerPhone" type="tel" inputmode="tel"'), 'el teléfono debe activar el teclado telefónico');
 assert.ok(!html.match(/id="saleCustomerPhone"[^>]*required/), 'el teléfono no debe ser obligatorio');
+assert.ok(html.includes('<option value="" selected>Elegir producto...</option>'), 'el selector de productos debe iniciar sin selección');
+assert.ok(html.includes('id="pendingButton" class="payment-button active"'), 'Pendiente debe aparecer seleccionado al iniciar');
 for (const relativeReference of ['href="manifest.webmanifest"', 'src="app.js"', 'href="styles.css"']) assert.ok(html.includes(relativeReference));
 
 const app = await readFile(new URL('app.js', root), 'utf8');
 const paymentButtons = ['>Pago total<', '>Pago parcial<', '>Cobrar por WhatsApp<'].map(label => app.indexOf(label));
 assert.ok(paymentButtons.every(index => index >= 0) && paymentButtons[0] < paymentButtons[1] && paymentButtons[1] < paymentButtons[2], 'las tres acciones de cobro deben aparecer en el orden solicitado');
+assert.match(app, /paymentMode: 'pending'/, 'la lógica debe comenzar cada formulario con Pendiente');
+assert.ok(!app.includes('data-cart-paid') && !app.includes('cart-paid-label'), 'el registro de venta no debe mostrar controles de unidades pagadas');
+assert.ok(app.includes("state.paymentMode === 'paid' ? item.quantity"), 'Pagó debe marcar todas las unidades como pagadas');
+assert.ok(app.includes("state.paymentMode = 'pending';"), 'al guardar y reiniciar, el estado vuelve a Pendiente');
+const styles = await readFile(new URL('styles.css', root), 'utf8');
+assert.ok(styles.includes('minmax(76px,15fr) minmax(0,50fr) minmax(150px,35fr)'), 'el ancho de escritorio debe aproximarse a 15/50/35');
+assert.ok(styles.includes('.sale-phone-field input'), 'el campo de teléfono debe tener ancho y formato numérico adaptables');
 
 for (const icon of manifest.icons) await access(new URL(icon.src, root));
 console.log('Validación PWA completada correctamente.');
