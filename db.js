@@ -1,5 +1,6 @@
 import { PRODUCT_CATALOG, reconcileProductCatalog } from './catalog.js';
 import { isSameCustomerDate, mergeDailySales, migrateSaleRecord } from './sales.js';
+import { planSaleDateCorrection, withCorrectedSaleDate } from './dates.js';
 
 const DB_NAME = 'renuevo-ventas';
 const DB_VERSION = 5;
@@ -114,6 +115,30 @@ export async function consolidateCustomerSales(customerId) {
     };
     tx.oncomplete = () => resolve(grouped);
     tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function correctSalesDate(saleIds, sourceDate, destinationDate) {
+  const db = await openDatabase();
+  const ids = [...new Set(saleIds.map(Number))];
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('sales', 'readwrite');
+    const store = tx.objectStore('sales');
+    const request = store.getAll();
+    let result = { updated: 0, conflicts: [{ type: 'not-completed' }] };
+    request.onsuccess = () => {
+      const plan = planSaleDateCorrection(request.result, ids, sourceDate, destinationDate);
+      if (!plan.canApply) {
+        result = { updated: 0, conflicts: plan.conflicts, missingIds: plan.missingIds };
+        return;
+      }
+      const updatedSales = withCorrectedSaleDate(plan.selected, destinationDate);
+      for (const sale of updatedSales) store.put(sale);
+      result = { updated: updatedSales.length, conflicts: [], missingIds: [] };
+    };
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('No se pudo corregir la fecha de las ventas.'));
   });
 }
 

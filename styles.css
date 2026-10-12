@@ -90,6 +90,16 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .scope-button.active { border-color:var(--green); color:var(--white); background:var(--green); }
 .editor-product { display:grid; gap:3px; padding:10px 12px; background:var(--mint); border-radius:14px; }
 .editor-product span { color:var(--muted); font-size:13px; }
+.date-correction-preview { display:grid; gap:8px; }
+.date-correction-preview p { margin-bottom:0; }
+.date-correction-list { max-height:230px; overflow:auto; border:1px solid var(--line); border-radius:13px; }
+.date-correction-sale { display:grid; grid-template-columns:24px minmax(0,1fr); align-items:center; gap:8px; padding:9px 10px; border-bottom:1px solid var(--line); }
+.date-correction-sale:last-child { border-bottom:0; }
+.date-correction-sale input { width:20px; min-height:20px; margin:0; padding:0; accent-color:var(--green); }
+.date-correction-sale span,.date-correction-sale strong,.date-correction-sale small { display:block; min-width:0; }
+.date-correction-sale small { margin-top:3px; color:var(--muted); font-size:12px; font-weight:500; }
+.date-correction-conflicts { padding:10px 12px; color:var(--danger); background:#fdeaea; border-radius:12px; font-size:13px; }
+.date-correction-conflicts ul { margin:6px 0 0; padding-left:18px; }
 .change-preview { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:10px 12px; color:var(--green-dark); background:var(--mint); border-radius:14px; font-size:13px; }
 .change-preview small { grid-column:1/-1; color:var(--muted); }
 .change-preview.conflict { display:block; color:var(--danger); background:#fdeaea; font-weight:750; }

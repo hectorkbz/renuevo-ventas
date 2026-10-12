@@ -1,5 +1,5 @@
-const CACHE = 'renuevo-ventas-v14';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './db.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
+const CACHE = 'renuevo-ventas-v15';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './dates.js', './db.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));

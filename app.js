@@ -1,20 +1,16 @@
-import { consolidateCustomerSales, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
+import { consolidateCustomerSales, correctSalesDate, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
 import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappUrl } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
+import { caracasLongDate, caracasShortDate, caracasToday, planSaleDateCorrection, shouldRefreshDefaultSaleDate } from './dates.js';
 import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'pending', selectedCustomerId: null, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'pending', selectedCustomerId: null, saleDateManuallySelected: false, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
-const dateLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(`${value}T12:00:00`));
-const compactDateLabel = value => {
-  const parts = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short' }).formatToParts(new Date(`${value}T12:00:00`));
-  const day = parts.find(part => part.type === 'day')?.value || '';
-  const month = (parts.find(part => part.type === 'month')?.value || '').replace('.', '');
-  return `${day} ${month}.`;
-};
+const dateLabel = caracasLongDate;
+const compactDateLabel = caracasShortDate;
 const dateTimeLabel = value => new Intl.DateTimeFormat('es-MX', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
-const today = () => new Date().toISOString().slice(0, 10);
+const today = caracasToday;
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
 
 function saleStatus(total, paid) {
@@ -34,6 +30,30 @@ function toast(message) {
   element.classList.add('show');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => element.classList.remove('show'), 2400);
+}
+
+function setSaleDate(dateValue) {
+  $('#saleDate').value = dateValue;
+  $('#saleDateDisplay').textContent = compactDateLabel(dateValue);
+}
+
+function refreshDefaultSaleDate() {
+  const currentDate = today();
+  if (shouldRefreshDefaultSaleDate($('#saleDate').value, currentDate, state.saleDateManuallySelected, state.cart.length > 0)) {
+    setSaleDate(currentDate);
+  }
+}
+
+function correctionConflictMessage(plan) {
+  const messages = plan.conflicts.map(conflict => {
+    if (conflict.type === 'invalid-dates') return 'La fecha de origen y destino deben ser diferentes.';
+    const customer = customerName(conflict.customerId);
+    return conflict.type === 'duplicate-after-move'
+      ? `${customer}: hay más de una venta seleccionada para la misma fecha.`
+      : `${customer}: ya existe una venta en la fecha de destino.`;
+  });
+  if (plan.missingIds.length) messages.push('La selección cambió. Actualiza la lista antes de continuar.');
+  return messages;
 }
 
 function download(name, content, type) {
@@ -65,6 +85,7 @@ async function seedDefaults() {
 }
 
 function navigate(view) {
+  if (view === 'sale') refreshDefaultSaleDate();
   document.querySelectorAll('.view').forEach(item => item.classList.toggle('active', item.id === `view-${view}`));
   document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -209,6 +230,65 @@ function openProduct(product = {}) {
     if (!name || !Number.isFinite(price) || price < 0) throw new Error('Revisa los datos del producto.');
     await put('products', { ...product, name, price });
     await refresh('Producto guardado.');
+  });
+}
+
+function openSaleDateCorrection() {
+  openModal('Corregir fecha de ventas', `
+    <p class="muted">Antes de corregir, descarga un respaldo JSON desde esta pantalla. Solo cambiaremos la fecha de las ventas seleccionadas; productos, precios, pagos e historiales quedan intactos.</p>
+    <label>Fecha de origen<input id="correctionSourceDate" name="sourceDate" type="date" required value="2026-10-12"></label>
+    <label>Fecha de destino<input id="correctionDestinationDate" name="destinationDate" type="date" required value="2026-10-11"></label>
+    <div id="dateCorrectionPreview" class="date-correction-preview" aria-live="polite"></div>
+  `, async data => {
+    const sourceDate = String(data.get('sourceDate'));
+    const destinationDate = String(data.get('destinationDate'));
+    const saleIds = data.getAll('saleIds').map(Number);
+    const plan = planSaleDateCorrection(state.sales, saleIds, sourceDate, destinationDate);
+    if (!plan.canApply) throw new Error(correctionConflictMessage(plan).join(' ' ) || 'Selecciona al menos una venta.');
+    const clients = [...new Set(plan.selected.map(sale => customerName(sale.customerId)))];
+    if (!confirm(`Vas a cambiar ${plan.selected.length} venta(s) del ${dateLabel(sourceDate)} al ${dateLabel(destinationDate)} para: ${clients.join(', ')}.\n\nExporta un respaldo JSON antes de continuar. ¿Confirmas la corrección?`)) return;
+    const result = await correctSalesDate(saleIds, sourceDate, destinationDate);
+    if (result.conflicts.length || result.missingIds.length || !result.updated) {
+      const latestPlan = { ...plan, conflicts: result.conflicts, missingIds: result.missingIds };
+      throw new Error(correctionConflictMessage(latestPlan).join(' ') || 'No se modificó ninguna venta.');
+    }
+    await refresh(`${result.updated} venta(s) corregida(s).`);
+  }, 'Confirmar corrección');
+
+  const renderPreview = (resetSelection = false) => {
+    const sourceDate = $('#correctionSourceDate').value;
+    const destinationDate = $('#correctionDestinationDate').value;
+    const previouslySelected = resetSelection
+      ? new Set()
+      : new Set([...$('#dateCorrectionPreview').querySelectorAll('[name="saleIds"]:checked')].map(input => Number(input.value)));
+    const matchingSales = state.sales.filter(sale => sale.date === sourceDate);
+    const chosen = matchingSales.filter(sale => previouslySelected.has(Number(sale.id)));
+    $('#dateCorrectionPreview').innerHTML = matchingSales.length
+      ? `<p><strong>Ventas encontradas con fecha de origen: ${matchingSales.length}</strong></p><button id="selectAllDateCorrection" type="button" class="text-button">Seleccionar todas las ventas encontradas</button><div class="date-correction-list">${matchingSales.map(sale => `<label class="date-correction-sale"><input type="checkbox" name="saleIds" value="${sale.id}" ${previouslySelected.has(Number(sale.id)) ? 'checked' : ''}><span><strong>${esc(customerName(sale.customerId))}</strong><small>Venta #${sale.id} · ${sale.items.length} productos · ${money.format(saleTotal(sale))}</small></span></label>`).join('')}</div>`
+      : '<p class="muted">No hay ventas con esa fecha de origen.</p>';
+    const saleIds = chosen.map(sale => sale.id);
+    const plan = planSaleDateCorrection(state.sales, saleIds, sourceDate, destinationDate);
+    const clients = [...new Set(plan.selected.map(sale => customerName(sale.customerId)))];
+    const affected = plan.selected.length
+      ? `<p id="dateCorrectionCount">Se modificarán <strong>${plan.selected.length}</strong> de ${matchingSales.length} venta(s) encontradas. Clientes: ${clients.map(esc).join(', ')}.</p>`
+      : `<p id="dateCorrectionCount">Selecciona las ventas que deseas corregir. Encontradas: ${matchingSales.length}.</p>`;
+    const conflicts = correctionConflictMessage(plan);
+    const conflictSummary = conflicts.length
+      ? `<div class="date-correction-conflicts"><strong>No se aplicará ningún cambio:</strong><ul>${conflicts.map(message => `<li>${esc(message)}</li>`).join('')}</ul></div>`
+      : '';
+    $('#dateCorrectionPreview').insertAdjacentHTML('beforeend', `${affected}${conflictSummary}`);
+    $('#modalSave').disabled = !plan.canApply;
+  };
+  renderPreview(true);
+  $('#correctionSourceDate').addEventListener('change', () => renderPreview(true));
+  $('#correctionDestinationDate').addEventListener('change', () => renderPreview(false));
+  $('#dateCorrectionPreview').addEventListener('change', event => {
+    if (event.target.matches('[name="saleIds"]')) renderPreview(false);
+  });
+  $('#dateCorrectionPreview').addEventListener('click', event => {
+    if (!event.target.matches('#selectAllDateCorrection')) return;
+    $('#dateCorrectionPreview').querySelectorAll('[name="saleIds"]').forEach(input => { input.checked = true; });
+    renderPreview(false);
   });
 }
 
@@ -540,7 +620,10 @@ function bindEvents() {
   });
   $('#saleCustomerName').addEventListener('focus', renderCustomerSuggestions);
   $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('.sale-basics').style.marginBottom = ''; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
-  $('#saleDate').addEventListener('change', () => { $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value); });
+  $('#saleDate').addEventListener('change', () => {
+    state.saleDateManuallySelected = true;
+    $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value);
+  });
   $('#salePaid').addEventListener('input', () => {
     state.cart = state.cart.map(item => ({ ...item, paidQuantity: 0 }));
     renderSaleForm();
@@ -560,6 +643,7 @@ function bindEvents() {
   });
   $('#newCustomerButton').addEventListener('click', () => openCustomer());
   $('#newProductButton').addEventListener('click', () => openProduct());
+  $('#correctSaleDatesButton').addEventListener('click', openSaleDateCorrection);
   $('#messageSettingsButton').addEventListener('click', openMessageSettings);
   $('#addItemButton').addEventListener('click', () => {
     const product = state.products.find(item => item.id === Number($('#saleProduct').value));
@@ -589,6 +673,8 @@ function bindEvents() {
       const result = await saveOrAppendSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt });
       state.cart = [];
       state.paymentMode = 'pending';
+      state.saleDateManuallySelected = false;
+      setSaleDate(today());
       $('#salePaid').value = '';
       $('#saleCustomerName').value = '';
       $('#saleCustomerPhone').value = '';
@@ -624,10 +710,11 @@ function bindEvents() {
 
 async function init() {
   $('#summaryDate').value = today();
-  $('#saleDate').value = today();
-  $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value);
+  setSaleDate(today());
   bindEvents();
   try { await seedDefaults(); await loadState(); renderAll(); } catch (error) { console.error(error); toast('No se pudo abrir el almacenamiento local.'); }
+  setInterval(refreshDefaultSaleDate, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDefaultSaleDate(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(console.error);
 }
 

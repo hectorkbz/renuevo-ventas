@@ -9,7 +9,7 @@ assert.ok(manifest.icons.some(icon => icon.sizes === '192x192'));
 assert.ok(manifest.icons.some(icon => icon.sizes === '512x512'));
 
 const serviceWorker = await readFile(new URL('sw.js', root), 'utf8');
-for (const asset of ['./index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './db.js', './manifest.webmanifest']) {
+for (const asset of ['./index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './dates.js', './db.js', './manifest.webmanifest']) {
   assert.ok(serviceWorker.includes(asset), `${asset} debe estar en la caché offline`);
 }
 
@@ -40,6 +40,10 @@ assert.match(app, /paymentMode: 'pending'/, 'la lógica debe comenzar cada formu
 assert.ok(!app.includes('data-cart-paid') && !app.includes('cart-paid-label'), 'el registro de venta no debe mostrar controles de unidades pagadas');
 assert.ok(app.includes("state.paymentMode === 'paid' ? item.quantity"), 'Pagó debe marcar todas las unidades como pagadas');
 assert.ok(app.includes("state.paymentMode = 'pending';"), 'al guardar y reiniciar, el estado vuelve a Pendiente');
+assert.ok(app.includes('caracasToday') && !app.includes('new Date().toISOString().slice(0, 10)'), 'la fecha automática debe basarse en la zona horaria de Caracas');
+assert.ok(app.includes("state.saleDateManuallySelected = true;") && app.includes('setInterval(refreshDefaultSaleDate'), 'la fecha manual se conserva y la predeterminada se actualiza con la aplicación abierta');
+assert.ok(html.includes('id="correctSaleDatesButton"'), 'la herramienta de corrección debe estar en Más');
+assert.ok(app.includes('planSaleDateCorrection') && app.includes('correctSalesDate(saleIds'), 'la corrección debe validar conflictos y guardar solo ventas seleccionadas');
 const styles = await readFile(new URL('styles.css', root), 'utf8');
 assert.ok(styles.includes('minmax(76px,15fr) minmax(0,50fr) minmax(150px,35fr)'), 'el ancho de escritorio debe aproximarse a 15/50/35');
 assert.ok(styles.includes('.sale-phone-field input'), 'el campo de teléfono debe tener ancho y formato numérico adaptables');
