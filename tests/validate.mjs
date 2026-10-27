@@ -48,6 +48,8 @@ assert.ok(app.includes('sortSalesPendingFirst(rows)'), 'el historial debe ordena
 assert.ok(html.includes('id="massCollectionButton"') && app.includes('function openMassCollection()'), 'el historial debe ofrecer cobranza masiva por cliente');
 assert.ok(app.includes("$('#toggleMassContact').addEventListener") && app.includes('updateCustomerContact(customer, customer.collectionContact?.status !== \'contacted\')'), 'el indicador de contacto solo cambia al pulsar su acción manual');
 assert.ok(app.includes('editSaleProducts') && app.includes('removeSaleProduct') && app.includes('changeSaleProductQuantity'), 'el detalle debe permitir editar productos con validaciones contables');
+assert.ok(app.includes("button.textContent = 'Procesando…'") && app.includes("No se pudo eliminar el producto. No se modificaron los pagos."), 'eliminar producto debe dar respuesta y capturar errores de guardado');
+assert.ok(app.includes('No se puede eliminar ${item.name}: tiene unidades pagadas') && app.includes('refresh(\'Producto eliminado; saldo e historial de correcciones actualizados.\')'), 'la eliminación protegida debe explicar conflictos y refrescar totales e historial');
 assert.ok(app.includes('collectionContact') && app.includes('buildDetailedCollectionMessage(customer, summary, state.settings)'), 'cada mensaje masivo usa la plantilla común y el indicador separado');
 assert.ok(serviceWorker.includes('renuevo-ventas-v16'), 'la caché offline se actualiza con los cambios');
 const styles = await readFile(new URL('styles.css', root), 'utf8');
