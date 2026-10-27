@@ -2,10 +2,10 @@ import { consolidateCustomerSales, correctSalesDate, count, deleteSale, exportAl
 import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappUrl } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
 import { caracasLongDate, caracasShortDate, caracasToday, planSaleDateCorrection, shouldRefreshDefaultSaleDate } from './dates.js';
-import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, summarizeSales } from './sales.js';
+import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, changeSaleProductQuantity, correctPaidAmount, editSaleProducts, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, removeSaleProduct, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, sortSalesPendingFirst, summarizeSales, updateCustomerContact } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
-const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'pending', selectedCustomerId: null, saleDateManuallySelected: false, savingSale: false, deletingSales: new Set(), payingSales: new Set() };
+const state = { products: [], customers: [], sales: [], settings: {}, cart: [], paymentMode: 'pending', selectedCustomerId: null, saleDateManuallySelected: false, savingSale: false, deletingSales: new Set(), payingSales: new Set(), editingSales: new Set() };
 const money = new Intl.NumberFormat('es-US', { style: 'currency', currency: 'USD' });
 const dateLabel = caracasLongDate;
 const compactDateLabel = caracasShortDate;
@@ -163,7 +163,8 @@ function renderHistory() {
     const status = saleStatus(saleTotal(sale), sale.paidAmount);
     return normalizeText(customerName(sale.customerId)).includes(query) && (!filter || status === filter);
   });
-  $('#historyList').innerHTML = rows.map(saleRow).join('') || '<p class="empty">No se encontraron ventas.</p>';
+  const sortedRows = sortSalesPendingFirst(rows);
+  $('#historyList').innerHTML = sortedRows.map(saleRow).join('') || '<p class="empty">No se encontraron ventas.</p>';
 }
 
 function customerDebt(customerId) {
@@ -298,8 +299,115 @@ function saleItemPaymentRow(item, index) {
   const stateClass = paidQuantity === item.quantity ? 'paid' : paidQuantity ? 'partial' : 'pending';
   return `<div class="sale-product-payment">
     <div class="product-payment-top"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><strong>${money.format(item.price * item.quantity)}</strong></div>
-    <div class="product-payment-bottom"><span class="compact-payment-state ${stateClass}">${stateLabel}</span><button type="button" class="change-payment-button" data-change-item="${index}">Cambiar</button></div>
+    <div class="product-payment-bottom"><span class="compact-payment-state ${stateClass}">${stateLabel}</span><span class="product-item-actions"><button type="button" class="change-payment-button" data-edit-sale-product="${index}">Editar</button><button type="button" class="change-payment-button" data-change-item="${index}">Pago</button></span></div>
   </div>`;
+}
+
+function describeProductCorrection(correction) {
+  const totalsByKey = items => {
+    const totals = new Map();
+    for (const item of items || []) {
+      const key = `${item.productId ?? ''}|${item.name}|${item.price}`;
+      const entry = totals.get(key) || { name: item.name, quantity: 0 };
+      entry.quantity += item.quantity;
+      totals.set(key, entry);
+    }
+    return totals;
+  };
+  const before = totalsByKey(correction.previousItems);
+  const after = totalsByKey(correction.newItems);
+  const keys = new Set([...before.keys(), ...after.keys()]);
+  return [...keys].map(key => {
+    const oldItem = before.get(key) || { name: after.get(key).name, quantity: 0 };
+    const newItem = after.get(key) || { name: oldItem.name, quantity: 0 };
+    return oldItem.quantity === newItem.quantity ? '' : `${esc(newItem.name)} ${oldItem.quantity} → ${newItem.quantity}`;
+  }).filter(Boolean).join(', ') || 'Productos actualizados';
+}
+
+async function persistSaleProducts(saleId, nextItems, message) {
+  if (state.editingSales.has(saleId)) return;
+  const sale = state.sales.find(item => item.id === saleId);
+  if (!sale) return toast('No se encontró la venta.');
+  let updated;
+  try { updated = editSaleProducts(sale, nextItems); }
+  catch (error) { return toast(error.message); }
+  state.editingSales.add(saleId);
+  try {
+    await put('sales', updated);
+    $('#modal').close();
+    await refresh(message);
+    const refreshed = state.sales.find(item => item.id === saleId);
+    if (refreshed) openSale(refreshed);
+  } catch (error) { toast(error.message); }
+  finally { state.editingSales.delete(saleId); }
+}
+
+function addProductToSale(saleId) {
+  const sale = state.sales.find(item => item.id === saleId);
+  const product = state.products.find(item => item.id === Number($('#saleProductToAdd').value));
+  if (!sale || !product) return toast('Selecciona un producto para agregar.');
+  persistSaleProducts(saleId, [...sale.items, { productId: product.id, name: product.name, price: product.price, quantity: 1, paidQuantity: 0 }], 'Producto agregado a la venta.');
+}
+
+function openSaleProductEditor(saleId, itemIndex) {
+  const sale = state.sales.find(item => item.id === saleId);
+  const item = sale?.items[itemIndex];
+  if (!sale || !item) return toast('No se encontró el producto.');
+  const linkedPayments = (sale.payments || []).some(payment => payment.kind === 'product' && Number(payment.itemIndex) === itemIndex)
+    || (sale.paymentCorrections || []).some(correction => Number(correction.itemIndex) === itemIndex);
+  openModal('Editar producto comprado', `
+    <div class="editor-product"><strong>${esc(item.name)}</strong><span>Precio histórico: ${money.format(item.price)} por unidad</span></div>
+    <label>Cantidad comprada<input id="saleProductQuantity" name="quantity" type="number" min="1" step="1" inputmode="numeric" value="${item.quantity}" required></label>
+    <p id="saleProductEditSummary" class="muted"></p>
+    ${item.paidQuantity || linkedPayments ? '<p class="date-correction-conflicts">Este producto tiene pagos o correcciones relacionados. No se reducirá la cantidad ni se borrará el historial de pagos.</p>' : ''}
+    <button id="removeSaleProduct" type="button" class="delete-sale-button">Eliminar producto comprado</button>
+  `, async data => {
+    const quantity = Number(data.get('quantity'));
+    if (!Number.isInteger(quantity) || quantity < 1) throw new Error('La cantidad debe ser al menos 1.');
+    if (quantity < item.quantity && (item.paidQuantity > 0 || linkedPayments)) throw new Error('No se puede reducir este producto porque tiene pagos vinculados. Corrige primero sus unidades pagadas si corresponde.');
+    const result = changeSaleProductQuantity(sale, itemIndex, quantity);
+    await put('sales', result);
+    await refresh('Cantidad actualizada; precio histórico conservado.');
+    const refreshed = state.sales.find(value => value.id === saleId);
+    if (refreshed) openSale(refreshed);
+  }, 'Guardar cambios');
+  reopenSaleAfterCancel(saleId);
+  const updateSummary = () => {
+    const quantity = Number($('#saleProductQuantity').value);
+    const total = saleTotal(sale);
+    const nextTotal = roundMoney(total + (quantity - item.quantity) * item.price);
+    const balance = roundMoney(nextTotal - sale.paidAmount);
+    $('#saleProductEditSummary').textContent = !Number.isInteger(quantity) || quantity < 1
+      ? 'Escribe una cantidad válida.'
+      : quantity === item.quantity ? 'La cantidad no cambió.' : `Nuevo vendido: ${money.format(nextTotal)} · Cobrado: ${money.format(sale.paidAmount)} · Pendiente: ${money.format(Math.max(0, balance))}${balance < 0 ? ' · No se puede guardar por debajo de lo cobrado.' : ''}`;
+    $('#modalSave').disabled = !Number.isInteger(quantity) || quantity < 1 || quantity === item.quantity || balance < -0.005 || (quantity < item.quantity && (item.paidQuantity > 0 || linkedPayments));
+  };
+  $('#saleProductQuantity').addEventListener('input', updateSummary);
+  $('#removeSaleProduct').addEventListener('click', async () => {
+    if (item.paidQuantity > 0 || linkedPayments) return toast('No se puede eliminar: este producto conserva pagos o correcciones vinculados.');
+    const next = sale.items.filter((_, index) => index !== itemIndex);
+    if (!next.length) {
+      if (sale.paidAmount > 0) return toast('No se puede eliminar el último producto mientras la venta tenga pagos. Corrige el pago primero.');
+      if (!confirm('Este es el último producto. ¿Eliminar la venta completa? También se eliminará su historial de productos y movimientos de pago.')) return;
+      if (state.deletingSales.has(saleId)) return;
+      state.deletingSales.add(saleId);
+      try { await deleteSale(saleId); $('#modal').close(); await refresh('Venta completa eliminada.'); }
+      finally { state.deletingSales.delete(saleId); }
+      return;
+    }
+    const nextTotal = saleTotal(next);
+    if (nextTotal + 0.0001 < sale.paidAmount) return toast(`No se puede eliminar: lo restante (${money.format(nextTotal)}) queda por debajo de lo cobrado (${money.format(sale.paidAmount)}).`);
+    if (!confirm(`¿Eliminar ${item.name} × ${item.quantity} de esta venta?`)) return;
+    let updated;
+    try { updated = removeSaleProduct(sale, itemIndex); }
+    catch (error) { return toast(error.message); }
+    await put('sales', updated);
+    $('#modal').close();
+    await refresh('Producto eliminado; pagos e historial conservados.');
+    const refreshed = state.sales.find(value => value.id === saleId);
+    if (refreshed) openSale(refreshed);
+  });
+  updateSummary();
 }
 
 function openSale(sale) {
@@ -307,8 +415,10 @@ function openSale(sale) {
   const debt = Math.max(0, total - sale.paidAmount);
   const corrections = sale.paymentCorrections || [];
   const payments = sale.payments || [];
+  const productCorrections = sale.corrections || [];
   openModal('Detalle de venta', `
     <div class="sale-detail-heading"><strong>${esc(customerName(sale.customerId))}</strong><span>${dateLabel(sale.date)}</span></div>
+    <div class="sale-product-add"><label>Agregar producto<select id="saleProductToAdd"><option value="">Elegir producto...</option>${state.products.map(product => `<option value="${product.id}">${esc(product.name)} · ${money.format(product.price)}</option>`).join('')}</select></label><button id="addSaleProduct" type="button" class="secondary-button compact-button">Agregar</button></div>
     <div class="sale-products-list">${sale.items.map(saleItemPaymentRow).join('')}</div>
     <div class="sale-payment-totals" aria-label="Resumen de pago">
       <div><span>Total vendido</span><strong>${money.format(total)}</strong></div>
@@ -324,6 +434,7 @@ function openSale(sale) {
     </div>
     ${payments.length ? `<details class="payment-history"><summary>Pagos registrados (${payments.length})</summary>${payments.map(payment => `<div><span>${dateTimeLabel(payment.at)}</span><strong>${money.format(payment.amount)}</strong></div>`).join('')}</details>` : ''}
     ${corrections.length ? `<details class="payment-history"><summary>Correcciones (${corrections.length})</summary>${corrections.slice().reverse().map(correction => `<div><span>${dateTimeLabel(correction.at)}</span><strong>${money.format(correction.previousAmount)} → ${money.format(correction.newAmount)}</strong></div>`).join('')}</details>` : ''}
+    ${productCorrections.length ? `<details class="payment-history"><summary>Modificaciones de productos (${productCorrections.length})</summary>${productCorrections.slice().reverse().map(correction => `<div class="product-correction-history"><span>${dateTimeLabel(correction.at)} · ${describeProductCorrection(correction)}</span><strong>Vendido: ${money.format(correction.previousTotal)} → ${money.format(correction.newTotal)} · Pendiente: ${money.format(correction.previousPending)} → ${money.format(correction.newPending)}</strong></div>`).join('')}</details>` : ''}
     <div class="danger-zone"><button id="deleteSale" type="button" class="delete-sale-button">Eliminar venta</button></div>
   `, async () => {}, 'Cerrar');
   $('#modalForm .modal-actions .secondary-button').hidden = true;
@@ -332,6 +443,7 @@ function openSale(sale) {
     recordLaterPayment(sale.id, debt, 'Pago completo registrado.', 'full');
   });
   $('#openPartialPayment')?.addEventListener('click', () => { $('#modal').close(); openPartialPaymentEditor(sale.id); });
+  $('#addSaleProduct')?.addEventListener('click', () => addProductToSale(sale.id));
   $('#collectSaleWhatsApp')?.addEventListener('click', () => {
     const customer = state.customers.find(item => item.id === sale.customerId);
     $('#modal').close();
@@ -343,6 +455,7 @@ function openSale(sale) {
   });
   $('#confirmPaymentCorrection').addEventListener('click', () => correctSalePayment(sale.id, $('#correctedPaidAmount').value));
   $('#modalBody').querySelectorAll('[data-change-item]').forEach(button => button.addEventListener('click', () => { $('#modal').close(); openItemPaymentEditor(sale.id, Number(button.dataset.changeItem)); }));
+  $('#modalBody').querySelectorAll('[data-edit-sale-product]').forEach(button => button.addEventListener('click', () => { $('#modal').close(); openSaleProductEditor(sale.id, Number(button.dataset.editSaleProduct)); }));
   $('#deleteSale').addEventListener('click', async () => {
     if (state.deletingSales.has(sale.id)) return;
     if (confirm('¿Eliminar esta venta? Esta acción no se puede deshacer.')) {
@@ -532,6 +645,97 @@ function openCollectionMessage(customer, saleId = null) {
   }));
 }
 
+function openMassCollection() {
+  let selectedIds = new Set();
+  let activeCustomerId = null;
+  openModal('Cobranza masiva', '<div></div>', async () => {}, 'Cerrar');
+  $('#modalSave').hidden = true;
+  $('#modalForm .modal-actions .secondary-button').hidden = true;
+
+  const customersWithDebt = () => state.customers.map(customer => ({
+    customer,
+    summary: summarizeSales(state.sales.filter(sale => sale.customerId === customer.id))
+  })).filter(row => row.summary.pending > 0.005).sort((a, b) => a.customer.name.localeCompare(b.customer.name, 'es'));
+
+  const showList = () => {
+    activeCustomerId = null;
+    const rows = customersWithDebt();
+    selectedIds = new Set([...selectedIds].filter(id => rows.some(row => row.customer.id === id)));
+    $('#modalTitle').textContent = 'Cobranza masiva';
+    $('#modalBody').innerHTML = rows.length ? `
+      <p class="muted">Una fila por cliente; el saldo incluye todas sus fechas pendientes. Preparar un mensaje no registra pagos ni marca contacto.</p>
+      <button id="massSelectAll" type="button" class="text-button">${selectedIds.size === rows.length ? 'Quitar selección' : 'Seleccionar todos'}</button>
+      <p id="massSelectionCount" class="mass-selection-count">${selectedIds.size} cliente(s) seleccionado(s)</p>
+      <div class="mass-customer-list">${rows.map(({ customer, summary }) => `<div class="mass-customer-row">
+        <label class="mass-customer-check"><input type="checkbox" data-mass-select="${customer.id}" ${selectedIds.has(customer.id) ? 'checked' : ''}><span><strong>${esc(customer.name)}</strong><small>${money.format(summary.pending)} pendiente · ${summarizeCollectionByDate(customer.id, state.sales).entries.length} fecha(s)</small><small class="contact-indicator ${customer.collectionContact?.status === 'contacted' ? 'contacted' : ''}">${customer.collectionContact?.status === 'contacted' ? `Contactado · ${dateTimeLabel(customer.collectionContact.at)}` : 'Sin contactar'}</small></span></label>
+        <button type="button" class="secondary-button compact-button" data-mass-message="${customer.id}">Enviar WhatsApp</button>
+      </div>`).join('')}</div>
+      <button id="massNextCustomer" type="button" class="primary-action" ${selectedIds.size ? '' : 'disabled'}>Preparar siguiente seleccionado</button>
+    ` : '<p class="empty">No hay clientes con saldo pendiente.</p>';
+    $('#modalBody').querySelectorAll('[data-mass-select]').forEach(input => input.addEventListener('change', () => {
+      const id = Number(input.dataset.massSelect);
+      if (input.checked) selectedIds.add(id); else selectedIds.delete(id);
+      $('#massSelectionCount').textContent = `${selectedIds.size} cliente(s) seleccionado(s)`;
+      $('#massNextCustomer').disabled = !selectedIds.size;
+      $('#massSelectAll').textContent = selectedIds.size === rows.length ? 'Quitar selección' : 'Seleccionar todos';
+    }));
+    $('#massSelectAll')?.addEventListener('click', () => {
+      if (selectedIds.size === rows.length) selectedIds.clear(); else selectedIds = new Set(rows.map(row => row.customer.id));
+      showList();
+    });
+    $('#modalBody').querySelectorAll('[data-mass-message]').forEach(button => button.addEventListener('click', () => showMessage(Number(button.dataset.massMessage))));
+    $('#massNextCustomer')?.addEventListener('click', () => {
+      const nextId = rows.find(row => selectedIds.has(row.customer.id))?.customer.id;
+      if (nextId) showMessage(nextId);
+    });
+  };
+
+  const showMessage = customerId => {
+    const customer = state.customers.find(item => item.id === customerId);
+    if (!customer) return showList();
+    const summary = summarizeCollectionByDate(customerId, state.sales);
+    if (!summary.pending) return toast('Este cliente ya no tiene saldo pendiente.');
+    activeCustomerId = customerId;
+    $('#modalTitle').textContent = `Cobranza · ${customer.name}`;
+    $('#modalBody').innerHTML = `
+      <p class="muted">Total pendiente en ${summary.entries.length} fecha(s): <strong>${money.format(summary.pending)}</strong>. El mensaje no modifica la deuda.</p>
+      <label>Teléfono WhatsApp<input id="massCollectionPhone" type="tel" inputmode="tel" maxlength="30" value="${esc(customer.phone || '')}" placeholder="Opcional: elige el contacto en WhatsApp"></label>
+      <label>Mensaje editable<textarea id="massCollectionMessage" class="message-preview">${esc(buildDetailedCollectionMessage(customer, summary, state.settings))}</textarea></label>
+      <div class="mass-message-actions"><button id="openMassWhatsApp" type="button" class="whatsapp-button">Abrir WhatsApp</button><button id="toggleMassContact" type="button" class="secondary-button">${customer.collectionContact?.status === 'contacted' ? 'Desmarcar contactado' : 'Marcar como contactado'}</button></div>
+      <p class="contact-indicator ${customer.collectionContact?.status === 'contacted' ? 'contacted' : ''}">${customer.collectionContact?.status === 'contacted' ? `Contactado · ${dateTimeLabel(customer.collectionContact.at)}` : 'No contactado (indicador manual)'}</p>
+      <button id="backToMassList" type="button" class="text-button">Volver a la lista de clientes</button>
+      <button id="nextMassCustomer" type="button" class="secondary-button">Preparar siguiente seleccionado</button>
+    `;
+    $('#backToMassList').addEventListener('click', showList);
+    $('#openMassWhatsApp').addEventListener('click', async () => {
+      const message = $('#massCollectionMessage').value.trim();
+      if (!message) return toast('El mensaje no puede estar vacío.');
+      const phone = $('#massCollectionPhone').value.trim();
+      if (phone !== customer.phone) {
+        const updated = { ...customer, phone };
+        await put('customers', updated);
+        state.customers = state.customers.map(item => item.id === customerId ? updated : item);
+      }
+      const opened = window.open(whatsappUrl(message, phone), '_blank');
+      if (!opened) window.location.href = whatsappUrl(message, phone);
+    });
+    $('#toggleMassContact').addEventListener('click', async () => {
+      const updated = updateCustomerContact(customer, customer.collectionContact?.status !== 'contacted');
+      await put('customers', updated);
+      state.customers = state.customers.map(item => item.id === customerId ? updated : item);
+      showMessage(customerId);
+    });
+    $('#nextMassCustomer').addEventListener('click', () => {
+      const ids = [...selectedIds];
+      const index = ids.indexOf(activeCustomerId);
+      const nextId = ids.slice(index + 1).find(id => customersWithDebt().some(row => row.customer.id === id)) || ids.find(id => customersWithDebt().some(row => row.customer.id === id));
+      if (nextId) showMessage(nextId); else toast('No quedan clientes seleccionados con deuda.');
+    });
+  };
+
+  showList();
+}
+
 function openMessageSettings() {
   const settings = { ...DEFAULT_MESSAGE_SETTINGS, ...state.settings };
   openModal('Mensaje de cobranza', `
@@ -614,6 +818,7 @@ function bindEvents() {
   $('#summaryDate').addEventListener('change', renderSummary);
   $('#historySearch').addEventListener('input', renderHistory);
   $('#historyStatus').addEventListener('change', renderHistory);
+  $('#massCollectionButton').addEventListener('click', openMassCollection);
   $('#saleCustomerName').addEventListener('input', () => {
     state.selectedCustomerId = null;
     renderCustomerSuggestions();
@@ -719,3 +924,4 @@ async function init() {
 }
 
 init();
+

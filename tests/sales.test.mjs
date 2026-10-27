@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { addCartItem, addMonetaryPayment, appendPurchaseToSale, applySubsequentPayment, changeItemPaidQuantity, correctPaidAmount, findCustomerByName, findCustomerMatches, isSameCustomerDate, mergeDailySales, migrateSaleRecord, normalizeText, resolvePaidAmount, saleTotal, summarizeSales } from '../sales.js';
+import { addCartItem, addMonetaryPayment, appendPurchaseToSale, applySubsequentPayment, changeItemPaidQuantity, changeSaleProductQuantity, correctPaidAmount, editSaleProducts, findCustomerByName, findCustomerMatches, isSameCustomerDate, mergeDailySales, migrateSaleRecord, normalizeText, removeSaleProduct, resolvePaidAmount, saleTotal, sortSalesPendingFirst, summarizeSales, updateCustomerContact } from '../sales.js';
 
 const coffee = { id: 1, name: 'Café', price: 3 };
 const bread = { id: 2, name: 'Pan', price: 2.5 };
@@ -84,12 +84,13 @@ maltas = changeItemPaidQuantity(maltas, 0, 3, '2026-10-11T15:02:00Z', true);
 assert.deepEqual(summarizeSales([maltas]), { total: 3, paid: 3, pending: 0 }, 'la cantidad final debe poder volver de 0 a 3 sin sumar unidades');
 
 const grouped = mergeDailySales([
-  { id: 1, customerId: 7, date: '2026-10-11', paidAmount: 2, items: [{ name: 'A', price: 2, quantity: 1 }] },
-  { id: 2, customerId: 7, date: '2026-10-11', paidAmount: 0, items: [{ name: 'B', price: 2, quantity: 1 }] }
+  { id: 1, customerId: 7, date: '2026-10-11', paidAmount: 2, items: [{ name: 'A', price: 2, quantity: 1 }], corrections: [{ type: 'product-edit', at: '2026-10-11T10:00:00Z' }] },
+  { id: 2, customerId: 7, date: '2026-10-11', paidAmount: 0, items: [{ name: 'B', price: 2, quantity: 1 }], corrections: [{ type: 'product-edit', at: '2026-10-11T10:30:00Z' }] }
 ], { customerId: 7, date: '2026-10-11', createdAt: '2026-10-11T13:00:00Z', paidAmount: 0, items: [{ name: 'C', price: 2, quantity: 1 }] });
 assert.equal(grouped.sale.id, 1);
 assert.deepEqual(grouped.removedIds, [2]);
 assert.equal(grouped.sale.mergedOperations.length, 1, 'debe conservar una copia de la operación agrupada');
+assert.equal(grouped.sale.corrections.length, 2, 'al agrupar ventas se conservan las correcciones de productos');
 assert.equal(isSameCustomerDate({ customerId: 7, date: '2026-10-11' }, 7, '2026-10-11'), true);
 assert.equal(isSameCustomerDate({ customerId: 7, date: '2026-10-12' }, 7, '2026-10-11'), false, 'no debe acumular compras de fechas diferentes');
 
@@ -98,8 +99,44 @@ assert.equal(findCustomerByName(customers, '  maría PÉREZ ').id, 2, 'debe evit
 assert.equal(findCustomerByName(customers, 'maria   perez').id, 2, 'debe ignorar tildes y espacios adicionales');
 assert.equal(normalizeText('  María   PÉREZ '), 'maria perez');
 assert.equal(findCustomerByName(customers, 'Cliente nuevo'), null);
+const editableSale = migrateSaleRecord({
+  id: 501, customerId: 8, date: '2026-10-11', paidAmount: 2, monetaryPaidAmount: 0,
+  items: [{ productId: 1, name: 'Café', price: 2, quantity: 2, paidQuantity: 1 }, { productId: 2, name: 'Pan', price: 2, quantity: 1, paidQuantity: 0 }],
+  payments: [{ amount: 2, kind: 'product', itemIndex: 0, at: '2026-10-11T10:00:00Z' }]
+});
+const increased = changeSaleProductQuantity(editableSale, 0, 3, '2026-10-11T11:00:00Z');
+assert.equal(increased.items[0].price, 2, 'al cambiar cantidad conserva el precio histórico');
+assert.equal(increased.items[0].quantity, 3);
+assert.equal(increased.paidAmount, 2, 'aumentar compra no duplica cobros');
+assert.equal(summarizeSales([increased]).pending, 6);
+assert.equal(increased.corrections.length, 1, 'registra la modificación de producto en correcciones');
+assert.deepEqual(increased.payments, editableSale.payments, 'los movimientos de pago no se modifican al editar productos');
+assert.throws(() => changeSaleProductQuantity(editableSale, 0, 1), /pagos vinculados/, 'no permite reducir unidades con pagos asociados');
+const removedUnpaid = removeSaleProduct(editableSale, 1, '2026-10-11T12:00:00Z');
+assert.equal(removedUnpaid.items.length, 1, 'permite eliminar el producto sin pagos asociados');
+assert.equal(removedUnpaid.paidAmount, 2);
+assert.equal(removedUnpaid.payments[0].itemIndex, 0, 'mantiene el vínculo del pago del producto restante');
+assert.throws(() => removeSaleProduct(editableSale, 0), /conserva pagos/, 'no elimina un producto pagado ni su movimiento');
+const correctedProductSale = { ...editableSale, items: editableSale.items.map((item, index) => index === 0 ? { ...item, paidQuantity: 0 } : item), paidAmount: 0, monetaryPaidAmount: 0 };
+assert.throws(() => removeSaleProduct(correctedProductSale, 0), /conserva pagos/, 'un pago histórico vinculado no se borra aunque las unidades ya se hayan corregido');
+assert.throws(() => editSaleProducts({ ...editableSale, paidAmount: 5 }, [editableSale.items[0]], '2026-10-11T12:00:00Z'), /por debajo de lo ya cobrado/, 'bloquea totales por debajo de lo cobrado');
+assert.throws(() => editSaleProducts(editableSale, []), /al menos un producto/, 'no permite ventas vacías');
+const addHistoricalProduct = editSaleProducts(editableSale, [...editableSale.items, { productId: 3, name: 'Malta', price: 1.25, quantity: 1, paidQuantity: 0 }], '2026-10-11T12:30:00Z');
+assert.equal(addHistoricalProduct.items[0].price, 2);
+assert.equal(addHistoricalProduct.items[2].price, 1.25, 'producto nuevo toma su precio vigente sin tocar los históricos');
+assert.equal(addHistoricalProduct.paidAmount, 2);
+assert.deepEqual(sortSalesPendingFirst([
+  { id: 1, date: '2026-10-12', paidAmount: 5, items: [{ price: 5, quantity: 1 }] },
+  { id: 2, date: '2026-10-10', paidAmount: 0, items: [{ price: 5, quantity: 1 }] },
+  { id: 3, date: '2026-10-11', paidAmount: 2, items: [{ price: 5, quantity: 1 }] }
+]).map(sale => sale.id), [3, 2, 1], 'pendiente y parcial van antes que pagado, ordenados por fecha reciente');
+const markedCustomer = updateCustomerContact({ id: 8, name: 'Daniela', phone: '' }, true, '2026-10-11T13:00:00Z');
+assert.equal(markedCustomer.collectionContact.status, 'contacted');
+assert.equal(markedCustomer.phone, '', 'el indicador de contacto no exige teléfono ni cambia el cliente');
+assert.equal(markedCustomer.id, 8);
 const fiftyCustomers = Array.from({ length: 50 }, (_, index) => ({ id: index + 10, name: `Cliente ${index + 1}` }));
 fiftyCustomers.push({ id: 100, name: 'Daniela Pérez', phone: '04120000000' }, { id: 101, name: 'Ana Daniela' }, { id: 102, name: 'Danilo' }, { id: 103, name: 'Jordan' });
 assert.deepEqual(findCustomerMatches(fiftyCustomers, ''), [], 'enfocar el campo vacío no debe mostrar la lista completa');
 assert.deepEqual(findCustomerMatches(fiftyCustomers, 'dán').map(customer => customer.name), ['Daniela Pérez', 'Danilo', 'Ana Daniela'], 'debe devolver como máximo tres coincidencias relevantes');
 console.log('Pruebas de venta rápida completadas correctamente.');
+

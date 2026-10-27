@@ -85,6 +85,7 @@ export function migrateSaleRecord(sale) {
     monetaryPaidAmount,
     payments: sale.payments || ((sale.paidAmount || 0) > 0 ? [{ amount: roundMoney(sale.paidAmount), at: createdAt, kind: 'legacy' }] : []),
     paymentCorrections: sale.paymentCorrections || [],
+    corrections: sale.corrections || [],
     purchaseMovements: sale.purchaseMovements || [{ at: createdAt, items: (sale.items || []).map(item => ({ ...item })) }],
     mergedOperations: sale.mergedOperations || []
   };
@@ -117,6 +118,7 @@ export function mergeDailySales(sales, purchase) {
       monetaryPaidAmount: roundMoney(target.monetaryPaidAmount + source.monetaryPaidAmount),
       payments: [...target.payments, ...source.payments],
       paymentCorrections: [...target.paymentCorrections, ...source.paymentCorrections],
+      corrections: [...target.corrections, ...source.corrections],
       purchaseMovements: [...target.purchaseMovements, ...source.purchaseMovements],
       mergedOperations: [...target.mergedOperations, ...source.mergedOperations, { ...source }]
     };
@@ -188,6 +190,76 @@ export function addCartItem(cart, product, quantity) {
   return next;
 }
 
+export function editSaleProducts(sale, nextItems, at = new Date().toISOString()) {
+  const current = migrateSaleRecord(sale);
+  if (!Array.isArray(nextItems) || nextItems.length === 0) throw new Error('Una venta debe conservar al menos un producto.');
+  const items = nextItems.map(item => ({ ...item, price: roundMoney(item.price), quantity: Number(item.quantity), paidQuantity: Number(item.paidQuantity) || 0 }));
+  if (items.some(item => !Number.isInteger(item.quantity) || item.quantity < 1 || !Number.isFinite(item.price) || item.price < 0 || !Number.isInteger(item.paidQuantity) || item.paidQuantity < 0 || item.paidQuantity > item.quantity)) {
+    throw new Error('Revisa las cantidades y pagos de los productos.');
+  }
+  const previousTotal = roundMoney(saleTotal(current.items));
+  const nextTotal = roundMoney(saleTotal(items));
+  const paidAmount = roundMoney(current.paidAmount);
+  if (nextTotal + 0.0001 < paidAmount) throw new Error(`El nuevo total (${nextTotal.toFixed(2)}) quedaría por debajo de lo ya cobrado (${paidAmount.toFixed(2)}). Corrige primero el pago.`);
+  const paidUnitAmount = paidByUnits(items);
+  if (paidUnitAmount > paidAmount + 0.005) throw new Error('La edición dejaría unidades pagadas por encima del total cobrado.');
+  const correction = {
+    type: 'product-edit', at,
+    previousItems: current.items.map(item => ({ ...item })),
+    newItems: items.map(item => ({ ...item })),
+    previousTotal, newTotal: nextTotal,
+    paidAmount, previousPending: roundMoney(previousTotal - paidAmount), newPending: roundMoney(nextTotal - paidAmount)
+  };
+  return { ...current, items, corrections: [...(current.corrections || []), correction], updatedAt: at };
+}
+
+function hasProductPaymentReference(sale, itemIndex) {
+  return (sale.payments || []).some(payment => payment.kind === 'product' && Number(payment.itemIndex) === itemIndex)
+    || (sale.paymentCorrections || []).some(correction => Number(correction.itemIndex) === itemIndex);
+}
+
+export function changeSaleProductQuantity(sale, itemIndex, quantity, at = new Date().toISOString()) {
+  const current = migrateSaleRecord(sale);
+  const item = current.items[itemIndex];
+  const nextQuantity = Number(quantity);
+  if (!item || !Number.isInteger(nextQuantity) || nextQuantity < 1) throw new Error('La cantidad debe ser al menos 1.');
+  if (nextQuantity < item.quantity && (item.paidQuantity > 0 || hasProductPaymentReference(current, itemIndex))) {
+    throw new Error('No se puede reducir este producto porque conserva pagos vinculados. Corrige primero las unidades pagadas si corresponde.');
+  }
+  const nextItems = current.items.map((value, index) => index === itemIndex ? { ...value, quantity: nextQuantity } : value);
+  return editSaleProducts(current, nextItems, at);
+}
+
+export function removeSaleProduct(sale, itemIndex, at = new Date().toISOString()) {
+  const current = migrateSaleRecord(sale);
+  const item = current.items[itemIndex];
+  if (!item) throw new Error('No se encontró el producto.');
+  if (current.items.length === 1) throw new Error('No se puede dejar una venta vacía; confirma la eliminación de la venta completa.');
+  if (item.paidQuantity > 0 || hasProductPaymentReference(current, itemIndex)) {
+    throw new Error('No se puede eliminar: este producto conserva pagos o correcciones vinculados.');
+  }
+  const nextItems = current.items.filter((_, index) => index !== itemIndex);
+  const nextTotal = roundMoney(saleTotal(nextItems));
+  if (nextTotal + 0.0001 < current.paidAmount) throw new Error(`El nuevo total (${nextTotal.toFixed(2)}) quedaría por debajo de lo ya cobrado (${current.paidAmount.toFixed(2)}).`);
+  const updated = editSaleProducts(current, nextItems, at);
+  const reindex = events => events.map(event => Number(event.itemIndex) > itemIndex ? { ...event, itemIndex: Number(event.itemIndex) - 1 } : event);
+  updated.payments = reindex(updated.payments || []);
+  updated.paymentCorrections = reindex(updated.paymentCorrections || []);
+  return updated;
+}
+
+export function sortSalesPendingFirst(sales) {
+  return [...sales].sort((a, b) => {
+    const aPending = saleTotal(a.items) - Number(a.paidAmount || 0) > 0.005;
+    const bPending = saleTotal(b.items) - Number(b.paidAmount || 0) > 0.005;
+    return Number(bPending) - Number(aPending) || b.date.localeCompare(a.date) || Number(b.id || 0) - Number(a.id || 0);
+  });
+}
+
+export function updateCustomerContact(customer, contacted, at = new Date().toISOString()) {
+  return { ...customer, collectionContact: contacted ? { status: 'contacted', at } : null };
+}
+
 export function findCustomerByName(customers, name) {
   const normalized = normalizeText(name);
   return customers.find(customer => normalizeText(customer.name) === normalized) || null;
@@ -207,3 +279,4 @@ export function findCustomerMatches(customers, value, limit = 3) {
     .sort((a, b) => relevance(a.name) - relevance(b.name) || a.name.localeCompare(b.name, 'es'))
     .slice(0, limit);
 }
+

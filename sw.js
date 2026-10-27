@@ -1,4 +1,4 @@
-const CACHE = 'renuevo-ventas-v15';
+const CACHE = 'renuevo-ventas-v16';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './billing.js', './catalog.js', './sales.js', './dates.js', './db.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', event => {
@@ -23,3 +23,4 @@ self.addEventListener('fetch', event => {
     return response;
   }).catch(() => event.request.mode === 'navigate' ? caches.match('./index.html') : undefined)));
 });
+
