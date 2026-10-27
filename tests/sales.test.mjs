@@ -137,6 +137,17 @@ const addHistoricalProduct = editSaleProducts(editableSale, [...editableSale.ite
 assert.equal(addHistoricalProduct.items[0].price, 2);
 assert.equal(addHistoricalProduct.items[2].price, 1.25, 'producto nuevo toma su precio vigente sin tocar los históricos');
 assert.equal(addHistoricalProduct.paidAmount, 2);
+const angelSale = migrateSaleRecord({ id: 505, customerId: 25, date: '2026-10-25', paidAmount: 0, items: [
+  { productId: 1, name: 'Producto A', price: 5, quantity: 1, paidQuantity: 0 },
+  { productId: 2, name: 'Producto B', price: 2, quantity: 1, paidQuantity: 0 },
+  { productId: 3, name: 'Producto C', price: 3, quantity: 1, paidQuantity: 0 },
+  { productId: 4, name: 'Producto D', price: 2, quantity: 1, paidQuantity: 0 }
+] });
+assert.deepEqual(summarizeSales([angelSale]), { total: 12, paid: 0, pending: 12 }, 'caso Ángel: cuatro productos pendientes por $12');
+const angelAfterRemoval = removeSaleProduct(angelSale, 0, '2026-10-26T10:00:00Z');
+assert.equal(angelAfterRemoval.items.length, 3);
+assert.deepEqual(summarizeSales([angelAfterRemoval]), { total: 7, paid: 0, pending: 7 }, 'al quitar el producto de $5 quedan $7 pendientes');
+assert.equal(angelAfterRemoval.corrections.at(-1).type, 'product-edit');
 assert.deepEqual(sortSalesPendingFirst([
   { id: 1, date: '2026-10-12', paidAmount: 5, items: [{ price: 5, quantity: 1 }] },
   { id: 2, date: '2026-10-10', paidAmount: 0, items: [{ price: 5, quantity: 1 }] },

@@ -127,6 +127,10 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .change-preview.conflict { display:block; color:var(--danger); background:#fdeaea; font-weight:750; }
 .danger-zone { margin-top:5px; padding-top:10px; border-top:1px solid var(--line); }
 .delete-sale-button { width:100%; min-height:40px; border:1px solid #e4c4c4; border-radius:12px; color:var(--danger); background:#fffafa; font-weight:750; }
+.sale-product-confirm { display:grid; gap:8px; padding:12px; border:1px solid #e4c4c4; border-radius:14px; background:#fffafa; }
+.sale-product-confirm p { margin:0; color:var(--ink); font-size:13px; line-height:1.45; }
+.sale-product-confirm>div { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.sale-product-confirm button { min-height:44px; padding:8px; }
 .customer-payment-summary { margin-bottom:4px; }
 button:disabled { cursor:default; opacity:.55; }
 .compact-empty { padding:10px; }

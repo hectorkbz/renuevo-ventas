@@ -360,7 +360,8 @@ function openSaleProductEditor(saleId, itemIndex) {
     <label>Cantidad comprada<input id="saleProductQuantity" name="quantity" type="number" min="1" step="1" inputmode="numeric" value="${item.quantity}" required></label>
     <p id="saleProductEditSummary" class="muted"></p>
     ${item.paidQuantity || linkedPayments ? '<p class="date-correction-conflicts">Este producto tiene pagos o correcciones relacionados. No se reducirá la cantidad ni se borrará el historial de pagos.</p>' : ''}
-    <button id="removeSaleProduct" type="button" class="delete-sale-button">Eliminar producto comprado</button>
+    <button id="removeSaleProduct" type="button" class="delete-sale-button" data-sale-id="${saleId}" data-item-index="${itemIndex}">Eliminar producto comprado</button>
+    <div id="removeSaleProductConfirm" class="sale-product-confirm" hidden></div>
   `, async data => {
     const quantity = Number(data.get('quantity'));
     if (!Number.isInteger(quantity) || quantity < 1) throw new Error('La cantidad debe ser al menos 1.');
@@ -383,48 +384,63 @@ function openSaleProductEditor(saleId, itemIndex) {
     $('#modalSave').disabled = !Number.isInteger(quantity) || quantity < 1 || quantity === item.quantity || balance < -0.005 || (quantity < item.quantity && (item.paidQuantity > 0 || linkedPayments));
   };
   $('#saleProductQuantity').addEventListener('input', updateSummary);
-  $('#removeSaleProduct').addEventListener('click', async event => {
-    const button = event.currentTarget;
-    if (state.editingSales.has(saleId) || state.deletingSales.has(saleId)) return toast('Esta venta ya se está actualizando.');
-    state.editingSales.add(saleId);
-    button.disabled = true;
-    button.textContent = 'Procesando…';
-    try {
-      const next = sale.items.filter((_, index) => index !== itemIndex);
-      if (!next.length) {
-        if (!confirm('Este es el último producto. ¿Eliminar la venta completa? También se eliminará su historial y movimientos de pago.')) return;
-        state.deletingSales.add(saleId);
-        await deleteSale(saleId);
-        $('#modal').close();
-        await refresh('Venta completa eliminada.');
-        return;
-      }
-      if (item.paidQuantity > 0 || linkedPayments) {
-        throw new Error(`No se puede eliminar ${item.name}: tiene unidades pagadas o movimientos/correcciones de pago vinculados. No se modificó ningún pago.`);
-      }
-      const nextTotal = saleTotal(next);
-      if (nextTotal + 0.0001 < sale.paidAmount) {
-        throw new Error(`No se puede eliminar: lo restante (${money.format(nextTotal)}) queda por debajo de lo cobrado (${money.format(sale.paidAmount)}). Corrige primero el pago.`);
-      }
-      if (!confirm(`¿Eliminar ${item.name} × ${item.quantity} de esta venta?`)) return;
-      const updated = removeSaleProduct(sale, itemIndex);
-      await put('sales', updated);
-      $('#modal').close();
-      await refresh('Producto eliminado; saldo e historial de correcciones actualizados.');
-      const refreshed = state.sales.find(value => value.id === saleId);
-      if (refreshed) openSale(refreshed);
-    } catch (error) {
-      toast(error?.message || 'No se pudo eliminar el producto. No se modificaron los pagos.');
-    } finally {
-      state.editingSales.delete(saleId);
-      state.deletingSales.delete(saleId);
-      if ($('#modal').open && $('#removeSaleProduct')) {
-        $('#removeSaleProduct').disabled = false;
-        $('#removeSaleProduct').textContent = 'Eliminar producto comprado';
-      }
-    }
-  });
   updateSummary();
+}
+
+function requestSaleProductRemoval(saleId, itemIndex) {
+  if (state.editingSales.has(saleId) || state.deletingSales.has(saleId)) return toast('Esta venta ya se está actualizando.');
+  const sale = state.sales.find(value => value.id === saleId);
+  const item = sale?.items[itemIndex];
+  if (!sale || !item) return toast('No se encontró el producto de esta venta.');
+  const confirmation = $('#removeSaleProductConfirm');
+  if (!confirmation) return toast('No se pudo abrir la confirmación. Cierra y vuelve a abrir el detalle.');
+  const isLastProduct = sale.items.length === 1;
+  if (!isLastProduct) {
+    const linkedPayments = (sale.payments || []).some(payment => payment.kind === 'product' && Number(payment.itemIndex) === itemIndex)
+      || (sale.paymentCorrections || []).some(correction => Number(correction.itemIndex) === itemIndex);
+    if (Number(item.paidQuantity) > 0 || linkedPayments) {
+      return toast(`No se puede eliminar ${item.name}: tiene unidades o movimientos de pago vinculados. No se alteró ningún pago.`);
+    }
+    try { removeSaleProduct(sale, itemIndex); }
+    catch (error) { return toast(error.message || 'Este producto no se puede eliminar sin afectar pagos.'); }
+  }
+  confirmation.innerHTML = `
+    <p>${isLastProduct
+      ? 'Es el último producto. Si confirmas, se eliminará la venta completa y también su historial y movimientos de pago.'
+      : `¿Eliminar ${esc(item.name)} × ${item.quantity}? Se conservarán los otros productos y sus pagos.`}</p>
+    <div><button type="button" class="secondary-button" data-sale-product-action="cancel">Cancelar</button><button type="button" class="delete-sale-button" data-sale-product-action="confirm" data-sale-id="${saleId}" data-item-index="${itemIndex}">${isLastProduct ? 'Eliminar venta completa' : 'Confirmar eliminación'}</button></div>
+  `;
+  confirmation.hidden = false;
+}
+
+async function confirmSaleProductRemoval(saleId, itemIndex, button) {
+  if (state.editingSales.has(saleId) || state.deletingSales.has(saleId)) return;
+  const sale = state.sales.find(value => value.id === saleId);
+  const item = sale?.items[itemIndex];
+  if (!sale || !item) return toast('No se encontró el producto de esta venta.');
+  const isLastProduct = sale.items.length === 1;
+  const lock = isLastProduct ? state.deletingSales : state.editingSales;
+  lock.add(saleId);
+  button.disabled = true;
+  button.textContent = 'Procesando…';
+  try {
+    if (isLastProduct) {
+      await deleteSale(saleId);
+      $('#modal').close();
+      await refresh('Venta completa eliminada.');
+      return;
+    }
+    const updated = removeSaleProduct(sale, itemIndex);
+    await put('sales', updated);
+    $('#modal').close();
+    await refresh('Producto eliminado; total, saldo e historial actualizados.');
+    const refreshed = state.sales.find(value => value.id === saleId);
+    if (refreshed) openSale(refreshed);
+  } catch (error) {
+    toast(error?.message || 'No se pudo eliminar el producto. No se modificaron los pagos.');
+  } finally {
+    lock.delete(saleId);
+  }
 }
 
 function openSale(sale) {
@@ -830,6 +846,28 @@ async function resolveSaleCustomer() {
 }
 
 function bindEvents() {
+  $('#modalBody').addEventListener('click', event => {
+    const request = event.target.closest('#removeSaleProduct');
+    const action = event.target.closest('[data-sale-product-action]');
+    if (request) {
+      event.preventDefault();
+      event.stopPropagation();
+      requestSaleProductRemoval(Number(request.dataset.saleId), Number(request.dataset.itemIndex));
+      return;
+    }
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (action.dataset.saleProductAction === 'cancel') {
+      const confirmation = $('#removeSaleProductConfirm');
+      confirmation.hidden = true;
+      confirmation.replaceChildren();
+      return;
+    }
+    if (action.dataset.saleProductAction === 'confirm') {
+      confirmSaleProductRemoval(Number(action.dataset.saleId), Number(action.dataset.itemIndex), action);
+    }
+  });
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.view)));
   document.querySelectorAll('[data-go]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.go)));
   $('#summaryDate').addEventListener('change', renderSummary);

@@ -49,9 +49,13 @@ assert.ok(html.includes('id="massCollectionButton"') && app.includes('function o
 assert.ok(app.includes("$('#toggleMassContact').addEventListener") && app.includes('updateCustomerContact(customer, customer.collectionContact?.status !== \'contacted\')'), 'el indicador de contacto solo cambia al pulsar su acción manual');
 assert.ok(app.includes('editSaleProducts') && app.includes('removeSaleProduct') && app.includes('changeSaleProductQuantity'), 'el detalle debe permitir editar productos con validaciones contables');
 assert.ok(app.includes("button.textContent = 'Procesando…'") && app.includes("No se pudo eliminar el producto. No se modificaron los pagos."), 'eliminar producto debe dar respuesta y capturar errores de guardado');
-assert.ok(app.includes('No se puede eliminar ${item.name}: tiene unidades pagadas') && app.includes('refresh(\'Producto eliminado; saldo e historial de correcciones actualizados.\')'), 'la eliminación protegida debe explicar conflictos y refrescar totales e historial');
+assert.ok(app.includes('No se puede eliminar ${item.name}: tiene unidades o movimientos de pago vinculados') && app.includes('Producto eliminado; total, saldo e historial actualizados.'), 'la eliminación protegida debe explicar conflictos y refrescar totales e historial');
+assert.ok(app.includes("$('#modalBody').addEventListener('click'") && app.includes("event.target.closest('#removeSaleProduct')"), 'el clic debe manejarse por delegación desde el contenedor estable del modal');
+assert.ok(app.includes('id="removeSaleProductConfirm"') && app.includes('data-sale-product-action="confirm"'), 'la confirmación se muestra dentro del modal y no depende de window.confirm');
+const removalFlow = app.slice(app.indexOf('function requestSaleProductRemoval'), app.indexOf('function openSale(sale)'));
+assert.ok(removalFlow && !removalFlow.includes('confirm('), 'la confirmación no debe invocar prompts nativos dentro del dialog');
 assert.ok(app.includes('collectionContact') && app.includes('buildDetailedCollectionMessage(customer, summary, state.settings)'), 'cada mensaje masivo usa la plantilla común y el indicador separado');
-assert.ok(serviceWorker.includes('renuevo-ventas-v16'), 'la caché offline se actualiza con los cambios');
+assert.ok(serviceWorker.includes('renuevo-ventas-v17'), 'la caché offline se actualiza con los cambios');
 const styles = await readFile(new URL('styles.css', root), 'utf8');
 assert.ok(styles.includes('minmax(76px,15fr) minmax(0,50fr) minmax(150px,35fr)'), 'el ancho de escritorio debe aproximarse a 15/50/35');
 assert.ok(styles.includes('.sale-phone-field input'), 'el campo de teléfono debe tener ancho y formato numérico adaptables');
