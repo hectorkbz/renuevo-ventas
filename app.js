@@ -299,7 +299,7 @@ function saleItemPaymentRow(item, index) {
   const stateClass = paidQuantity === item.quantity ? 'paid' : paidQuantity ? 'partial' : 'pending';
   return `<div class="sale-product-payment">
     <div class="product-payment-top"><span class="item-main"><strong>${esc(item.name)} × ${item.quantity}</strong><span>${money.format(item.price)} c/u</span></span><strong>${money.format(item.price * item.quantity)}</strong></div>
-    <div class="product-payment-bottom"><span class="compact-payment-state ${stateClass}">${stateLabel}</span><span class="product-item-actions"><button type="button" class="change-payment-button" data-edit-sale-product="${index}">Editar</button><button type="button" class="change-payment-button" data-change-item="${index}">Pago</button></span></div>
+    <div class="product-payment-bottom"><span class="compact-payment-state ${stateClass}">${stateLabel}</span><span class="product-item-actions"><button type="button" class="change-payment-button" aria-label="Editar compra de ${esc(item.name)}" data-edit-sale-product="${index}">Editar</button><button type="button" class="change-payment-button" aria-label="Cambiar unidades pagadas de ${esc(item.name)}" data-change-item="${index}">Pago</button></span></div>
   </div>`;
 }
 
@@ -384,10 +384,8 @@ function openSaleProductEditor(saleId, itemIndex) {
   };
   $('#saleProductQuantity').addEventListener('input', updateSummary);
   $('#removeSaleProduct').addEventListener('click', async () => {
-    if (item.paidQuantity > 0 || linkedPayments) return toast('No se puede eliminar: este producto conserva pagos o correcciones vinculados.');
     const next = sale.items.filter((_, index) => index !== itemIndex);
     if (!next.length) {
-      if (sale.paidAmount > 0) return toast('No se puede eliminar el último producto mientras la venta tenga pagos. Corrige el pago primero.');
       if (!confirm('Este es el último producto. ¿Eliminar la venta completa? También se eliminará su historial de productos y movimientos de pago.')) return;
       if (state.deletingSales.has(saleId)) return;
       state.deletingSales.add(saleId);
@@ -395,6 +393,7 @@ function openSaleProductEditor(saleId, itemIndex) {
       finally { state.deletingSales.delete(saleId); }
       return;
     }
+    if (item.paidQuantity > 0 || linkedPayments) return toast('No se puede eliminar: este producto conserva pagos o correcciones vinculados.');
     const nextTotal = saleTotal(next);
     if (nextTotal + 0.0001 < sale.paidAmount) return toast(`No se puede eliminar: lo restante (${money.format(nextTotal)}) queda por debajo de lo cobrado (${money.format(sale.paidAmount)}).`);
     if (!confirm(`¿Eliminar ${item.name} × ${item.quantity} de esta venta?`)) return;
