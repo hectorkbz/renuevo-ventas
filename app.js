@@ -727,7 +727,7 @@ function openMassCollection() {
     $('#nextMassCustomer').addEventListener('click', () => {
       const ids = [...selectedIds];
       const index = ids.indexOf(activeCustomerId);
-      const nextId = ids.slice(index + 1).find(id => customersWithDebt().some(row => row.customer.id === id)) || ids.find(id => customersWithDebt().some(row => row.customer.id === id));
+      const nextId = ids.slice(Math.max(0, index + 1)).find(id => id !== activeCustomerId && customersWithDebt().some(row => row.customer.id === id));
       if (nextId) showMessage(nextId); else toast('No quedan clientes seleccionados con deuda.');
     });
   };
