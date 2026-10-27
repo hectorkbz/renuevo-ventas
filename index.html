@@ -33,7 +33,7 @@
         <div class="section-heading sale-heading"><h2 id="saleTitle">Registrar venta</h2></div>
         <form id="saleForm" class="stack sale-form" autocomplete="off">
           <div class="sale-basics">
-            <label class="sale-date-field">Fecha<span class="compact-date"><span id="saleDateDisplay"></span><input id="saleDate" type="date" required aria-label="Fecha completa de la venta" /></span></label>
+            <div class="sale-date-field"><div class="sale-date-label"><label for="saleDate">Fecha</label><button id="todaySaleDate" class="sale-today-button" type="button">Hoy</button></div><span class="compact-date"><span id="saleDateDisplay"></span><input id="saleDate" type="date" required aria-label="Fecha completa de la venta" /></span></div>
             <div class="customer-search"><label>Cliente<input id="saleCustomerName" maxlength="80" placeholder="Venta general" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="customerSuggestions" aria-expanded="false" /></label><div id="customerSuggestions" class="customer-suggestions" role="listbox" hidden></div></div>
             <label class="sale-phone-field">Teléfono<input id="saleCustomerPhone" type="tel" inputmode="tel" maxlength="30" autocomplete="tel" /></label>
           </div>

@@ -1,4 +1,5 @@
 const CARACAS = 'America/Caracas';
+export const SALE_DATE_STORAGE_KEY = 'renuevo-ventas:selected-sale-date';
 
 const calendarParts = new Intl.DateTimeFormat('en-CA', {
   timeZone: CARACAS,
@@ -34,6 +35,23 @@ export function shouldRefreshDefaultSaleDate(selectedDate, currentDate, manually
   return !manuallySelected && !hasCart && selectedDate !== currentDate;
 }
 
+export function readSavedSaleDate(storage) {
+  try {
+    const value = storage.getItem(SALE_DATE_STORAGE_KEY);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+    const parsed = new Date(`${value}T12:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : null;
+  } catch { return null; }
+}
+
+export function saveSelectedSaleDate(storage, dateValue) {
+  storage.setItem(SALE_DATE_STORAGE_KEY, dateValue);
+}
+
+export function clearSelectedSaleDate(storage) {
+  storage.removeItem(SALE_DATE_STORAGE_KEY);
+}
+
 export function planSaleDateCorrection(sales, selectedSaleIds, sourceDate, destinationDate) {
   const ids = [...new Set(selectedSaleIds.map(Number))];
   const idSet = new Set(ids);
@@ -61,3 +79,4 @@ export function planSaleDateCorrection(sales, selectedSaleIds, sourceDate, desti
 export function withCorrectedSaleDate(sales, destinationDate) {
   return sales.map(sale => ({ ...sale, date: destinationDate }));
 }
+

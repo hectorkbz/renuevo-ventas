@@ -30,6 +30,9 @@ label { display:grid; gap:7px; color:#4b5d58; font-size:14px; font-weight:700; }
 .sale-form { gap:8px; }
 .sale-basics { display:grid; grid-template-columns:minmax(76px,15fr) minmax(0,50fr) minmax(150px,35fr); align-items:start; gap:8px; transition:margin-bottom .15s ease; }
 .sale-basics label { gap:4px; min-width:0; }
+.sale-date-label { display:flex; align-items:center; justify-content:space-between; min-height:17px; gap:2px; }
+.sale-date-label label { font-size:12px; }
+.sale-today-button { min-height:24px; padding:0 2px; border:0; color:var(--green); background:none; font-size:12px; font-weight:800; }
 .sale-basics input { min-height:44px; padding:9px 8px; font-size:14px; }
 .sale-phone-field input { min-width:0; font-variant-numeric:tabular-nums; }
 .compact-date { position:relative; display:flex; min-height:44px; align-items:center; justify-content:center; overflow:hidden; color:var(--ink); background:var(--white); border:1px solid var(--line); border-radius:13px; font-size:14px; font-weight:650; white-space:nowrap; }
@@ -151,6 +154,6 @@ dialog { width:min(calc(100% - 28px),520px); max-height:85vh; padding:0; overflo
 .file-button input { display:none; }
 .toast { position:fixed; z-index:50; left:50%; bottom:calc(90px + env(safe-area-inset-bottom)); max-width:calc(100% - 32px); padding:12px 18px; border-radius:14px; color:#fff; background:#173b31; box-shadow:0 10px 30px rgba(0,0,0,.2); opacity:0; pointer-events:none; transform:translate(-50%,12px); transition:.2s; } .toast.show { opacity:1; transform:translate(-50%,0); }
 @media (min-width:700px) { .bottom-nav { left:50%; width:680px; transform:translateX(-50%); border:1px solid var(--line); border-bottom:0; border-radius:20px 20px 0 0; } }
-@media (max-width:420px) { .app-shell { padding-left:12px; padding-right:12px; } .sale-basics { grid-template-columns:58px minmax(0,1fr) minmax(112px,31vw); gap:5px; } .sale-basics input,.compact-date { font-size:13px; } .sale-phone-field input { padding-left:6px; padding-right:6px; font-size:12px; } .partial-payment { grid-template-columns:1fr; align-items:start; } .summary-card strong { font-size:22px; } .payment-summary span { min-height:29px; } }
-@media (max-width:360px) { .filters { grid-template-columns:1fr; } .sale-basics { grid-template-columns:54px minmax(0,1fr) minmax(106px,31vw); gap:4px; } .sale-basics input { padding-left:6px; padding-right:6px; font-size:12px; } .sale-phone-field input { font-size:11px; } .compact-date { font-size:12px; } .summary-card strong { font-size:21px; } }
+@media (max-width:420px) { .app-shell { padding-left:12px; padding-right:12px; } .sale-basics { grid-template-columns:64px minmax(0,1fr) minmax(112px,31vw); gap:5px; } .sale-basics input,.compact-date { font-size:13px; } .sale-phone-field input { padding-left:6px; padding-right:6px; font-size:12px; } .partial-payment { grid-template-columns:1fr; align-items:start; } .summary-card strong { font-size:22px; } .payment-summary span { min-height:29px; } }
+@media (max-width:360px) { .filters { grid-template-columns:1fr; } .sale-basics { grid-template-columns:62px minmax(0,1fr) minmax(106px,31vw); gap:4px; } .sale-basics input { padding-left:6px; padding-right:6px; font-size:12px; } .sale-phone-field input { font-size:11px; } .compact-date { font-size:12px; } .summary-card strong { font-size:21px; } }
 

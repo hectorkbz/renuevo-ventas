@@ -3,7 +3,10 @@ import {
   caracasLongDate,
   caracasShortDate,
   caracasToday,
+  clearSelectedSaleDate,
   planSaleDateCorrection,
+  readSavedSaleDate,
+  saveSelectedSaleDate,
   shouldRefreshDefaultSaleDate,
   withCorrectedSaleDate
 } from '../dates.js';
@@ -16,6 +19,25 @@ assert.equal(caracasToday(new Date('2026-10-12T04:00:00Z')), '2026-10-12', 'al l
 assert.equal(shouldRefreshDefaultSaleDate('2026-10-11', '2026-10-12', false, false), true, 'actualiza la fecha automática al cambiar de día');
 assert.equal(shouldRefreshDefaultSaleDate('2026-10-11', '2026-10-12', true, false), false, 'no reemplaza una fecha elegida manualmente');
 assert.equal(shouldRefreshDefaultSaleDate('2026-10-11', '2026-10-12', false, true), false, 'no cambia la fecha con una venta en curso');
+
+const savedValues = new Map();
+const storage = {
+  getItem: key => savedValues.get(key) ?? null,
+  setItem: (key, value) => savedValues.set(key, value),
+  removeItem: key => savedValues.delete(key)
+};
+assert.equal(readSavedSaleDate(storage), null, 'sin selección manual usa la fecha actual');
+saveSelectedSaleDate(storage, '2026-10-24');
+assert.equal(readSavedSaleDate(storage), '2026-10-24', 'conserva el 24/10/2026 al reabrir');
+for (let sale = 0; sale < 10; sale += 1) {
+  assert.equal(readSavedSaleDate(storage), '2026-10-24', 'varias ventas mantienen la fecha elegida');
+  assert.equal(shouldRefreshDefaultSaleDate('2026-10-24', '2026-10-27', true, false), false);
+}
+clearSelectedSaleDate(storage);
+assert.equal(readSavedSaleDate(storage), null, 'Hoy quita la selección persistida');
+assert.equal(caracasToday(new Date('2026-10-27T02:00:00Z')), '2026-10-26', 'Hoy respeta la fecha de Venezuela');
+savedValues.set('renuevo-ventas:selected-sale-date', '2026-02-31');
+assert.equal(readSavedSaleDate(storage), null, 'una fecha guardada inválida no se usa');
 
 const sourceSale = {
   id: 1,
@@ -61,3 +83,4 @@ assert.equal(duplicateMovePlan.canApply, false, 'no crea duplicados al mover var
 assert.ok(duplicateMovePlan.conflicts.some(conflict => conflict.type === 'duplicate-after-move'));
 
 console.log('Pruebas de fechas y corrección segura completadas correctamente.');
+

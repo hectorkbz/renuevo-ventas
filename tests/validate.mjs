@@ -27,6 +27,7 @@ assert.ok(html.includes('apple-mobile-web-app-capable'));
 assert.ok(html.includes('viewport-fit=cover'));
 assert.ok(html.includes('<select id="saleQuantity"'), 'la cantidad debe usar selector nativo');
 assert.ok(html.includes('id="saleDateDisplay"'), 'la fecha visible debe usar el formato compacto sin año');
+assert.ok(html.includes('id="todaySaleDate"') && html.includes('id="saleDate" type="date"'), 'la fecha permite calendario y regreso a Hoy');
 assert.ok(html.includes('id="saleCustomerPhone" type="tel" inputmode="tel"'), 'el teléfono debe activar el teclado telefónico');
 assert.ok(!html.match(/id="saleCustomerPhone"[^>]*required/), 'el teléfono no debe ser obligatorio');
 assert.ok(html.includes('<option value="" selected>Elegir producto...</option>'), 'el selector de productos debe iniciar sin selección');
@@ -42,6 +43,9 @@ assert.ok(app.includes("state.paymentMode === 'paid' ? item.quantity"), 'Pagó d
 assert.ok(app.includes("state.paymentMode = 'pending';"), 'al guardar y reiniciar, el estado vuelve a Pendiente');
 assert.ok(app.includes('caracasToday') && !app.includes('new Date().toISOString().slice(0, 10)'), 'la fecha automática debe basarse en la zona horaria de Caracas');
 assert.ok(app.includes("state.saleDateManuallySelected = true;") && app.includes('setInterval(refreshDefaultSaleDate'), 'la fecha manual se conserva y la predeterminada se actualiza con la aplicación abierta');
+assert.ok(app.includes('saveSelectedSaleDate(window.localStorage') && app.includes('readSavedSaleDate(window.localStorage') && app.includes('clearSelectedSaleDate(window.localStorage'), 'la fecha se recuerda y Hoy restablece el modo automático');
+const saleSaveFlow = app.slice(app.indexOf("$('#saleForm').addEventListener('submit'"), app.indexOf("document.body.addEventListener('click'"));
+assert.ok(!saleSaveFlow.includes('setSaleDate(today())') && !saleSaveFlow.includes('state.saleDateManuallySelected = false'), 'guardar una venta no debe reiniciar la fecha');
 assert.ok(html.includes('id="correctSaleDatesButton"'), 'la herramienta de corrección debe estar en Más');
 assert.ok(app.includes('planSaleDateCorrection') && app.includes('correctSalesDate(saleIds'), 'la corrección debe validar conflictos y guardar solo ventas seleccionadas');
 assert.ok(app.includes('sortSalesPendingFirst(rows)'), 'el historial debe ordenar primero las ventas con saldo pendiente');
@@ -55,7 +59,7 @@ assert.ok(app.includes('id="removeSaleProductConfirm"') && app.includes('data-sa
 const removalFlow = app.slice(app.indexOf('function requestSaleProductRemoval'), app.indexOf('function openSale(sale)'));
 assert.ok(removalFlow && !removalFlow.includes('confirm('), 'la confirmación no debe invocar prompts nativos dentro del dialog');
 assert.ok(app.includes('collectionContact') && app.includes('buildDetailedCollectionMessage(customer, summary, state.settings)'), 'cada mensaje masivo usa la plantilla común y el indicador separado');
-assert.ok(serviceWorker.includes('renuevo-ventas-v17'), 'la caché offline se actualiza con los cambios');
+assert.ok(serviceWorker.includes('renuevo-ventas-v18'), 'la caché offline se actualiza con los cambios');
 const styles = await readFile(new URL('styles.css', root), 'utf8');
 assert.ok(styles.includes('minmax(76px,15fr) minmax(0,50fr) minmax(150px,35fr)'), 'el ancho de escritorio debe aproximarse a 15/50/35');
 assert.ok(styles.includes('.sale-phone-field input'), 'el campo de teléfono debe tener ancho y formato numérico adaptables');

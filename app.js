@@ -1,7 +1,7 @@
 import { consolidateCustomerSales, correctSalesDate, count, deleteSale, exportAll, getAll, put, remove, replaceAll, saveOrAppendSale } from './db.js';
 import { buildDetailedCollectionMessage, DEFAULT_MESSAGE_SETTINGS, summarizeCollectionByDate, whatsappUrl } from './billing.js';
 import { PRODUCT_CATALOG } from './catalog.js';
-import { caracasLongDate, caracasShortDate, caracasToday, planSaleDateCorrection, shouldRefreshDefaultSaleDate } from './dates.js';
+import { caracasLongDate, caracasShortDate, caracasToday, clearSelectedSaleDate, planSaleDateCorrection, readSavedSaleDate, saveSelectedSaleDate, shouldRefreshDefaultSaleDate } from './dates.js';
 import { addCartItem, addMonetaryPayment, changeItemPaidQuantity, changeSaleProductQuantity, correctPaidAmount, editSaleProducts, findCustomerByName, findCustomerMatches, normalizeText, paidByUnits, removeSaleProduct, resolvePaidAmount, roundMoney, saleTotal as itemsTotal, sortSalesPendingFirst, summarizeSales, updateCustomerContact } from './sales.js';
 
 const $ = selector => document.querySelector(selector);
@@ -881,8 +881,20 @@ function bindEvents() {
   $('#saleCustomerName').addEventListener('focus', renderCustomerSuggestions);
   $('#saleCustomerName').addEventListener('blur', () => setTimeout(() => { $('#customerSuggestions').hidden = true; $('.sale-basics').style.marginBottom = ''; $('#saleCustomerName').setAttribute('aria-expanded', 'false'); }, 150));
   $('#saleDate').addEventListener('change', () => {
+    if (!$('#saleDate').value) return;
     state.saleDateManuallySelected = true;
     $('#saleDateDisplay').textContent = compactDateLabel($('#saleDate').value);
+    try { saveSelectedSaleDate(window.localStorage, $('#saleDate').value); }
+    catch { toast('No se pudo recordar la fecha en este dispositivo.'); }
+  });
+  $('#saleDate').addEventListener('click', event => {
+    try { event.currentTarget.showPicker?.(); } catch { /* El navegador conserva su selector nativo. */ }
+  });
+  $('#todaySaleDate').addEventListener('click', () => {
+    state.saleDateManuallySelected = false;
+    setSaleDate(today());
+    try { clearSelectedSaleDate(window.localStorage); }
+    catch { toast('No se pudo borrar la fecha recordada en este dispositivo.'); }
   });
   $('#salePaid').addEventListener('input', () => {
     state.cart = state.cart.map(item => ({ ...item, paidQuantity: 0 }));
@@ -933,8 +945,6 @@ function bindEvents() {
       const result = await saveOrAppendSale({ customerId, date: $('#saleDate').value, items: state.cart.map(item => ({ ...item })), paidAmount, createdAt });
       state.cart = [];
       state.paymentMode = 'pending';
-      state.saleDateManuallySelected = false;
-      setSaleDate(today());
       $('#salePaid').value = '';
       $('#saleCustomerName').value = '';
       $('#saleCustomerPhone').value = '';
@@ -970,7 +980,10 @@ function bindEvents() {
 
 async function init() {
   $('#summaryDate').value = today();
-  setSaleDate(today());
+  let savedDate = null;
+  try { savedDate = readSavedSaleDate(window.localStorage); } catch { /* Almacenamiento local no disponible. */ }
+  state.saleDateManuallySelected = Boolean(savedDate);
+  setSaleDate(savedDate || today());
   bindEvents();
   try { await seedDefaults(); await loadState(); renderAll(); } catch (error) { console.error(error); toast('No se pudo abrir el almacenamiento local.'); }
   setInterval(refreshDefaultSaleDate, 30000);
